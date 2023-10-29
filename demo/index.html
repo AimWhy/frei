@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+    <style>
+      button:hover {
+        background-color: blueviolet;
+      }
+
+      .animate {
+        position: absolute;
+        background-color: brown;
+        color: white;
+        animation: myAnimation 5s;
+        animation-direction: alternate;
+        animation-iteration-count: infinite;
+        animation-delay: 0;
+        animation-timing-function: linear;
+        animation-direction: alternate;
+      }
+
+      @keyframes myAnimation {
+        100% {
+          margin-left: 700px;
+        }
+      }
+
+      .danger {
+        background-color: red;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div>
+      <div class="animate">text</div>
+    </div>
+    <div id="app"></div>
+    <script type="module" src="main.jsx"></script>
+  </body>
+</html>

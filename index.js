@@ -105,7 +105,7 @@
 
     channel.port1.onmessage = function performWork() {
       const startTime = performance.now();
-      console.count(MacrotaskName);
+      // console.count(MacrotaskName);
 
       if (scheduledCallbackQueue.length) {
         let next;
@@ -522,7 +522,7 @@
   };
 
   const dispatchHook = (fiber, hookName, async) => {
-    console.log(`dispatch Component-${hookName}`, fiber.nodeKey);
+    // console.log(`dispatch Component-${hookName}`, fiber.nodeKey);
 
     if (fiber[hookName].size === 0) {
       return;

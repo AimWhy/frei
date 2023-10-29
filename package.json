@@ -10,7 +10,7 @@
     "package.json"
   ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "demo": "vite serve demo/ --config demo/vite.config.js --force"
   },
   "repository": {
     "type": "git",
@@ -26,5 +26,9 @@
   "bugs": {
     "url": "https://github.com/AimWhy/frei/issues"
   },
-  "homepage": "https://github.com/AimWhy/frei#readme"
+  "homepage": "https://github.com/AimWhy/frei#readme",
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.4",
+    "vite": "^4.4.9"
+  }
 }
