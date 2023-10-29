@@ -1,0 +1,30 @@
+{
+  "name": "frei",
+  "version": "1.0.0",
+  "description": "jsx to fiber to dom",
+  "module": "module.js",
+  "main": "index.js",
+  "files": [
+    "module.js",
+    "index.js",
+    "package.json"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AimWhy/frei.git"
+  },
+  "keywords": [
+    "react",
+    "fiber",
+    "jsx"
+  ],
+  "author": "wanghongying",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/AimWhy/frei/issues"
+  },
+  "homepage": "https://github.com/AimWhy/frei#readme"
+}
