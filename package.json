@@ -1,5 +1,5 @@
 {
-  "name": "frei",
+  "name": "@aimwhy/frei",
   "version": "1.0.0",
   "description": "jsx to fiber to dom",
   "module": "module.js",
