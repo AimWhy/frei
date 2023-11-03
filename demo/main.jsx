@@ -40,7 +40,7 @@ function Hello(props) {
         value={state}
         onInput={(e) => {
           console.log("onInput");
-          props.parentChange((v) => !v);
+          // props.parentChange((v) => !v);
           setState(e.target.value);
           setState2(() => "tt" + e.target.value.slice(-3));
         }}
@@ -102,9 +102,11 @@ function App(props) {
         "Portal inner"
       )}
 
-      <Hello parentChange={setState2} key="hello">
-        {memo}
-      </Hello>
+      <div>
+        <Hello parentChange={setState2} key="hello">
+          {memo}
+        </Hello>
+      </div>
 
       {state ? (
         <World

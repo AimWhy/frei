@@ -97,50 +97,53 @@
     }
   };
 
-  const genQueueMacrotask = (MacrotaskName) => {
-    let isMessageLoopRunning = false;
-    const scheduledCallbackQueue = [];
+  const genQueueMacrotask = (macrotaskName) => {
     const frameYieldMs = 8;
+    const scheduledQueue = [];
     const channel = new MessageChannel();
 
-    channel.port1.onmessage = function performWork() {
-      const startTime = performance.now();
-      // console.count(MacrotaskName);
+    let isLoopRunning = false;
 
-      if (scheduledCallbackQueue.length) {
-        let next;
-        try {
-          let timeElapsed = 0;
-          while (timeElapsed < frameYieldMs && scheduledCallbackQueue.length) {
-            const work = scheduledCallbackQueue.shift();
-            next = work({
-              get didTimeout() {
-                return performance.now() - startTime > frameYieldMs;
-              },
-            });
-            timeElapsed = performance.now() - startTime;
-          }
-        } finally {
-          if (next !== void 0) {
-            scheduledCallbackQueue.unshift(next);
-          }
-          if (scheduledCallbackQueue.length) {
-            schedulePerform();
-          } else {
-            isMessageLoopRunning = false;
-          }
+    channel.port1.onmessage = function performWork() {
+      if (!scheduledQueue.length) {
+        isLoopRunning = false;
+        return;
+      }
+
+      let next;
+      const startTime = performance.now();
+      const deadline = {
+        get didTimeout() {
+          return performance.now() - startTime > frameYieldMs;
+        },
+      };
+
+      console.count(macrotaskName);
+
+      try {
+        do {
+          const work = scheduledQueue.shift();
+          next = work(deadline);
+        } while (!deadline.didTimeout && scheduledQueue.length);
+      } finally {
+        if (typeof next === "function") {
+          scheduledQueue.unshift(next);
         }
-      } else {
-        isMessageLoopRunning = false;
+
+        if (scheduledQueue.length) {
+          schedulePerform();
+        } else {
+          isLoopRunning = false;
+        }
       }
     };
 
     const schedulePerform = () => channel.port2.postMessage(null);
 
     return (task) => {
-      scheduledCallbackQueue.push(task);
-      if (!isMessageLoopRunning) {
-        isMessageLoopRunning = true;
+      scheduledQueue.push(task);
+      if (!isLoopRunning) {
+        isLoopRunning = true;
         schedulePerform();
       }
     };
@@ -183,14 +186,15 @@
       }
       targetElement = targetElement.parentNode;
     }
+
     return paths;
   }
 
   function createSyntheticEvent(e) {
     const syntheticEvent = e;
-    syntheticEvent.__stopPropagation = false;
     const originStopPropagation = e.stopPropagation;
 
+    syntheticEvent.__stopPropagation = false;
     syntheticEvent.stopPropagation = () => {
       syntheticEvent.__stopPropagation = true;
       if (originStopPropagation) {
@@ -237,7 +241,7 @@
     });
   }
 
-  const testHostSpecial = (name) => /^on[A-Z]/.test(name);
+  const testHostAttr = (name) => /^on[A-Z]/.test(name);
   const hostSpecialAttrSet = new Set([
     "onLoad",
     "onBeforeunload",
@@ -358,6 +362,10 @@
   const hostConfig = domHostConfig;
 
   let workInProgress = null;
+  const useFiber = () => {
+    return workInProgress;
+  };
+
   const ComponentGenMemo = new WeakMap();
   const genComponentInnerElement = (fiber) => {
     if (
@@ -371,21 +379,22 @@
 
     let result = null;
     const preFiber = workInProgress;
+
     try {
-      fiber.StateIndex = 0;
+      fiber._StateIndex = 0;
       workInProgress = fiber;
       result = fiber.type(fiber.pendingProps);
+      ComponentGenMemo.set(fiber, result);
     } finally {
       workInProgress = preFiber;
     }
 
-    ComponentGenMemo.set(fiber, result);
     return result;
   };
 
   const useReducer = (reducer, initialState) => {
-    const fiber = workInProgress;
-    const innerIndex = fiber.StateIndex++;
+    const fiber = useFiber();
+    const innerIndex = fiber._StateIndex++;
     const { hookQueue, rerender } = fiber;
 
     if (hookQueue.length <= innerIndex) {
@@ -405,8 +414,8 @@
   };
 
   const useRef = (initialValue) => {
-    const fiber = workInProgress;
-    const innerIndex = fiber.StateIndex++;
+    const fiber = useFiber();
+    const innerIndex = fiber._StateIndex++;
     const { hookQueue } = fiber;
 
     if (hookQueue.length <= innerIndex) {
@@ -427,6 +436,7 @@
       Provider: (props) => {
         const fiber = useFiber();
         const { value, children } = props;
+
         if (value === void 0) {
           fiber.pendingProps.value = initialState;
         }
@@ -443,7 +453,7 @@
   };
 
   const useContext = (context) => {
-    const fiber = workInProgress;
+    const fiber = useFiber();
     const providerFiber = findParentFiber(
       fiber,
       (f) => f.type === context.Provider
@@ -454,21 +464,21 @@
   };
 
   const useEffect = (func, dep) => {
-    const fiber = workInProgress;
-    const innerIndex = fiber.StateIndex++;
+    const fiber = useFiber();
+    const innerIndex = fiber._StateIndex++;
     const { hookQueue } = fiber;
 
     if (hookQueue.length <= innerIndex) {
       if (Array.isArray(dep)) {
         if (!dep.length) {
-          workInProgress.onMounted.add(func);
+          fiber.onMounted.add(func);
         } else {
-          workInProgress.onUpdated.add(func);
+          fiber.onUpdated.add(func);
         }
       } else if (Number.isNaN(dep)) {
-        workInProgress.onBeforeMove.add(func);
+        fiber.onBeforeMove.add(func);
       } else {
-        workInProgress.onUpdated.add(func);
+        fiber.onUpdated.add(func);
       }
       hookQueue[innerIndex] = { func, dep };
     } else {
@@ -479,11 +489,11 @@
         dep.length &&
         oldDep.length
       ) {
-        workInProgress.onUpdated.delete(oldFunc);
+        fiber.onUpdated.delete(oldFunc);
 
         if (!objectEqual(oldDep, dep)) {
           hookQueue[innerIndex] = { func, dep };
-          workInProgress.onUpdated.add(func);
+          fiber.onUpdated.add(func);
         }
       }
     }
@@ -517,46 +527,46 @@
     return value;
   };
 
-  const useFiber = () => {
-    return workInProgress;
+  const runner = (fiber, hookName) => {
+    for (const hook of fiber[hookName]) {
+      const destroy = hook(fiber);
+
+      if (typeof destroy === "function") {
+        const cleanName =
+          {
+            onBeforeMove: "onMoved",
+            onMounted: "onUnMounted",
+            onUpdated: "onBeforeUpdate",
+          }[hookName] || "__None__";
+
+        if (fiber[cleanName]) {
+          const destroyOnce = () => {
+            destroy();
+            fiber[cleanName].delete(destroyOnce);
+          };
+          fiber[cleanName].add(destroyOnce);
+        }
+      }
+    }
   };
 
   const dispatchHook = (fiber, hookName, async) => {
     // console.log(`dispatch Component-${hookName}`, fiber.nodeKey);
 
-    if (fiber[hookName].size === 0) {
-      return;
-    }
-
-    const runner = () => {
-      for (const hook of fiber[hookName]) {
-        const destroy = hook(fiber);
-        if (typeof destroy === "function") {
-          const cleanName = {
-            onBeforeMove: "onMoved",
-            onMounted: "onUnMounted",
-            onUpdated: "onBeforeUpdate",
-          }[hookName];
-
-          if (fiber[cleanName]) {
-            fiber[cleanName].add(destroy);
-          }
-        }
+    if (fiber[hookName].size) {
+      if (async) {
+        otherQueueMacrotask(() => runner(fiber, hookName));
+      } else {
+        runner(fiber, hookName);
       }
-    };
-
-    if (async) {
-      otherQueueMacrotask(runner);
-    } else {
-      runner();
     }
   };
 
   class Fiber {
     key = null;
     ref = null;
-    pNodeKey = "";
     type = null;
+    pNodeKey = "";
     pendingProps = {};
     memoizedProps = {};
     memoizedState = null;
@@ -574,19 +584,26 @@
     flags = NoFlags;
     subtreeFlags = NoFlags;
 
-    StateIndex = 0;
+    _StateIndex = 0;
     hookQueue = [];
 
     onSetup = new Set();
     onMounted = new Set();
     onUnMounted = new Set();
-    onBeforeUpdate = new Set();
     onUpdated = new Set();
+    onBeforeUpdate = new Set();
     onBeforeMove = new Set();
     onMoved = new Set();
 
     rerender = () => {
-      pushRenderFiber(this);
+      if (Fiber.isHostFiber(this)) {
+        console.warn(this.nodeKey);
+        forceRender(this);
+      } else {
+        this.flags |= Update;
+        Fiber.RerenderSet.add(this);
+        queueMicrotaskOnce(batchRerender);
+      }
     };
 
     get index() {
@@ -672,6 +689,7 @@
       if (this.stateNode) {
         this.stateNode.__fiber = this;
       }
+
       if (!Fiber.isHostFiber(this)) {
         dispatchHook(this, "onSetup");
       }
@@ -681,10 +699,38 @@
       return this.nodeKey.startsWith(returnFiber.nodeKey);
     }
   }
+
   Fiber.ExistPool = new Map();
-  Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + ":" + key;
+  Fiber.RerenderSet = new Set();
+  Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
   Fiber.isTextFiber = (fiber) => fiber && fiber.type === "text";
   Fiber.isHostFiber = (fiber) => fiber && typeof fiber.type === "string";
+
+  const batchRerender = () => {
+    const mapCount = new Map();
+    let commonReturnHost = null;
+
+    label: for (const current of Fiber.RerenderSet) {
+      let fiber = current;
+      while (fiber) {
+        if (Fiber.isHostFiber(fiber)) {
+          const preCount = mapCount.get(fiber) || 0;
+          const curCount = preCount + 1;
+
+          if (curCount >= Fiber.RerenderSet.size) {
+            commonReturnHost = fiber;
+            break label;
+          } else {
+            mapCount.set(fiber, curCount);
+          }
+        }
+        fiber = fiber.return;
+      }
+    }
+
+    Fiber.RerenderSet.clear();
+    commonReturnHost.rerender();
+  };
 
   function* walkChildFiber(returnFiber) {
     let fiber = returnFiber.child;
@@ -705,12 +751,10 @@
 
   function bubbleFlags(fiber) {
     let subtreeFlags = NoFlags;
-
     for (const child of walkChildFiber(fiber)) {
       subtreeFlags |= child.subtreeFlags;
       subtreeFlags |= child.flags;
     }
-
     fiber.subtreeFlags |= subtreeFlags;
   }
 
@@ -867,7 +911,7 @@
           continue;
         }
 
-        if (testHostSpecial(pKey)) {
+        if (testHostAttr(pKey)) {
           if (hostSpecialAttrSet.has(pKey)) {
             attrs.push(pKey, pValue);
           }
@@ -886,7 +930,7 @@
           continue;
         }
 
-        if (testHostSpecial(pKey)) {
+        if (testHostAttr(pKey)) {
           if (hostSpecialAttrSet.has(pKey)) {
             attrs.push(pKey, void 0);
           }
@@ -918,18 +962,14 @@
     for (const fiber of fiberList) {
       if (Fiber.isTextFiber(fiber)) {
         finishedWork(fiber);
-        if (fiber.subtreeFlags !== NoFlags) {
-          yield fiber;
-        }
+        yield fiber;
       } else {
         yield* walkFiber(fiber);
       }
     }
 
     finishedWork(returnFiber);
-    if (returnFiber.subtreeFlags !== NoFlags) {
-      yield returnFiber;
-    }
+    yield returnFiber;
   }
 
   const placementFiber = (fiber, index) => {
@@ -981,8 +1021,8 @@
         } else {
           dispatchHook(f, "onUnMounted", true);
         }
-        f.ref && f.ref(null);
 
+        f.ref && f.ref(null);
         Fiber.ExistPool.delete(f.nodeKey);
       }
     }
@@ -1065,11 +1105,6 @@
     });
   }
 
-  const pushRenderFiber = (fiber) => {
-    fiber.flags |= Update;
-    queueMicrotaskOnce(fiber.root.rerender);
-  };
-
   const innerRender = (deadline, rootFiber) => {
     if (!rootFiber.generator) {
       rootFiber.generator = walkFiber(rootFiber);
@@ -1080,10 +1115,8 @@
       taskObj = rootFiber.generator.next();
       if (taskObj.done) {
         rootFiber.generator = null;
-      } else {
-        if (deadline.didTimeout) {
-          return (deadline) => innerRender(deadline, rootFiber);
-        }
+      } else if (deadline.didTimeout) {
+        return (deadline) => innerRender(deadline, rootFiber);
       }
     } while (!taskObj.done);
 
@@ -1110,7 +1143,6 @@
         rootFiber.stateNode = container;
         rootFiber.root = rootFiber;
         rootFiber.flags |= Update;
-        rootFiber.rerender = forceRender.bind(null, rootFiber);
         rootFiber.rerender();
       },
     };
