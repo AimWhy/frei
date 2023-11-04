@@ -476,7 +476,7 @@ const genComponentInnerElement = (fiber) => {
 export const useReducer = (reducer, initialState) => {
   const fiber = useFiber();
   const innerIndex = fiber._StateIndex++;
-  const { hookQueue, rerender } = fiber;
+  const { hookQueue } = fiber;
 
   if (hookQueue.length <= innerIndex) {
     const state = isFunction(initialState) ? initialState() : initialState;
@@ -484,7 +484,7 @@ export const useReducer = (reducer, initialState) => {
     const dispatch = (action) => {
       const newState = reducer(hookQueue[innerIndex].state, action);
       hookQueue[innerIndex].state = newState;
-      rerender();
+      fiber.rerender();
     };
 
     hookQueue[innerIndex] = { state, dispatch };
@@ -547,6 +547,10 @@ export const useEffect = (func, dep) => {
   const { hookQueue } = fiber;
 
   if (hookQueue.length <= innerIndex) {
+    if (!fiber.onMounted) {
+      Fiber.initLifecycle(fiber);
+    }
+
     if (isArray(dep)) {
       if (!dep.length) {
         fiber.onMounted.add(func);
@@ -626,7 +630,7 @@ const runner = (fiber, hookName) => {
 const dispatchHook = (fiber, hookName, async) => {
   // console.log(`dispatch Component-${hookName}`, fiber.nodeKey);
 
-  if (fiber[hookName].size) {
+  if (fiber[hookName] && fiber[hookName].size) {
     if (async) {
       effectQueueMacrotask(() => runner(fiber, hookName));
     } else {
@@ -692,27 +696,6 @@ class Fiber {
   flags = NoFlags;
   subtreeFlags = NoFlags;
 
-  _StateIndex = 0;
-  hookQueue = [];
-
-  onSetup = new Set();
-  onMounted = new Set();
-  onUnMounted = new Set();
-  onUpdated = new Set();
-  onBeforeUpdate = new Set();
-  onBeforeMove = new Set();
-  onMoved = new Set();
-
-  rerender = () => {
-    if (Fiber.isHostFiber(this)) {
-      forceRender(this);
-    } else {
-      markUpdate(this);
-      Fiber.RerenderSet.add(this);
-      queueMicrotaskOnce(batchRerender);
-    }
-  };
-
   get index() {
     return this._index;
   }
@@ -777,19 +760,28 @@ class Fiber {
       this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
     } else if (Fiber.isHostFiber(this)) {
       this.stateNode = hostConfig.createInstance(this.type);
+    } else {
+      Fiber.initHookQueue(this);
     }
 
     if (this.stateNode) {
       this.stateNode.__fiber = this;
     }
-
-    if (!Fiber.isHostFiber(this)) {
-      dispatchHook(this, "onSetup");
-    }
   }
 
   isDescendantOf(returnFiber) {
     return this.nodeKey.startsWith(returnFiber.nodeKey);
+  }
+
+  rerender() {
+    if (Fiber.isHostFiber(this)) {
+      console.log(this.nodeKey);
+      forceRender(this);
+    } else {
+      markUpdate(this);
+      Fiber.RerenderSet.add(this);
+      queueMicrotaskOnce(batchRerender);
+    }
   }
 }
 
@@ -799,6 +791,18 @@ Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
 Fiber.isPortal = (fiber) => fiber && fiber.pendingProps.__target;
 Fiber.isTextFiber = (fiber) => fiber && fiber.type === "text";
 Fiber.isHostFiber = (fiber) => fiber && typeof fiber.type === "string";
+Fiber.initHookQueue = (fiber) => {
+  fiber._StateIndex = 0;
+  fiber.hookQueue = [];
+};
+Fiber.initLifecycle = (fiber) => {
+  fiber.onMounted = new Set();
+  fiber.onUnMounted = new Set();
+  fiber.onUpdated = new Set();
+  fiber.onBeforeUpdate = new Set();
+  fiber.onBeforeMove = new Set();
+  fiber.onMoved = new Set();
+};
 
 const batchRerender = () => {
   const mapFiberCount = new Map();
