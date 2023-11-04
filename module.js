@@ -79,6 +79,7 @@ const uniqueSet = new Set();
 const queueMicrotaskOnce = (func) => {
   if (!uniqueSet.has(func)) {
     uniqueSet.add(func);
+
     queueMicrotask(() => {
       func();
       uniqueSet.delete(func);
@@ -87,7 +88,7 @@ const queueMicrotaskOnce = (func) => {
 };
 
 const genQueueMacrotask = (macrotaskName) => {
-  const frameYieldMs = 8;
+  const frameYieldMs = 10;
   const scheduledQueue = [];
   const channel = new MessageChannel();
 
@@ -138,9 +139,9 @@ const genQueueMacrotask = (macrotaskName) => {
   };
 };
 
-const queueMacrotask = genQueueMacrotask("main-macro-task");
+const mainQueueMacrotask = genQueueMacrotask("main-macro-task");
 
-const otherQueueMacrotask = genQueueMacrotask("other-macro-task");
+const effectQueueMacrotask = genQueueMacrotask("effect-macro-task");
 
 const elementPropsKey = "__props";
 
@@ -148,6 +149,16 @@ const elementPropsKey = "__props";
 
 const eventTypeMap = {
   click: ["onClickCapture", "onClick"],
+  dblclick: ["onDblclickCapture", "onDblclick"],
+  mousedown: ["onMousedownCapture", "onMousedown"],
+  mouseup: ["onMouseupCapture", "onMouseup"],
+  keydown: ["onKeydownCapture", "onKeydown"],
+  keyup: ["onKeyupCapture", "onKeyup"],
+  keypress: ["onKeypressCapture", "onKeypress"],
+  submit: ["onSubmitCapture", "onSubmit"],
+  touchstart: ["onTouchstartCapture", "onTouchstart"],
+  touchend: ["onTouchendCapture", "onTouchend"],
+  touchmove: ["onTouchmoveCapture", "onTouchmove"],
 };
 
 function collectPaths(targetElement, container, eventType) {
@@ -161,7 +172,6 @@ function collectPaths(targetElement, container, eventType) {
     const elementProps = targetElement[elementPropsKey];
 
     if (elementProps && callbackNameList) {
-      // click -> onClick onClickCapture
       callbackNameList.forEach((callbackName, i) => {
         const eventCallback = elementProps[callbackName];
         if (eventCallback) {
@@ -226,7 +236,7 @@ function initEvent(container, eventType) {
   });
 }
 
-const testHostAttr = (name) => /^on[A-Z]/.test(name);
+const testHostSpecialAttr = (name) => /^on[A-Z]/.test(name);
 const hostSpecialAttrSet = new Set([
   "onLoad",
   "onBeforeunload",
@@ -262,16 +272,16 @@ const eventCallback = (e) => {
 };
 
 const domHostConfig = {
-  toAttrName(key) {
+  fixAttrName(key) {
     return (
       {
         className: "class",
+        htmlFor: "for",
       }[key] || key
     );
   },
   createInstance(type) {
-    const element = document.createElement(type);
-    return element;
+    return document.createElement(type);
   },
   createTextInstance(content) {
     return document.createTextNode(content);
@@ -302,7 +312,7 @@ const domHostConfig = {
       if (hostSpecialAttrSet.has(pKey)) {
         domHostConfig.fixHostSpecial(node, pKey, pValue);
       } else {
-        const attrName = hostConfig.toAttrName(pKey);
+        const attrName = hostConfig.fixAttrName(pKey);
         if (pValue === void 0) {
           node.removeAttribute(attrName);
         } else {
@@ -351,17 +361,7 @@ export const useFiber = () => {
   return workInProgress;
 };
 
-const ComponentGenMemo = new WeakMap();
 const genComponentInnerElement = (fiber) => {
-  if (
-    !fiber.isSelfStateChange &&
-    ComponentGenMemo.has(fiber) &&
-    objectEqual(fiber.memoizedProps, fiber.pendingProps, true)
-  ) {
-    // keepalive
-    return ComponentGenMemo.get(fiber);
-  }
-
   let result = null;
   const preFiber = workInProgress;
 
@@ -369,7 +369,6 @@ const genComponentInnerElement = (fiber) => {
     fiber._StateIndex = 0;
     workInProgress = fiber;
     result = fiber.type(fiber.pendingProps);
-    ComponentGenMemo.set(fiber, result);
   } finally {
     workInProgress = preFiber;
   }
@@ -540,7 +539,7 @@ const dispatchHook = (fiber, hookName, async) => {
 
   if (fiber[hookName].size) {
     if (async) {
-      otherQueueMacrotask(() => runner(fiber, hookName));
+      effectQueueMacrotask(() => runner(fiber, hookName));
     } else {
       runner(fiber, hookName);
     }
@@ -789,6 +788,19 @@ const findParentFiber = (fiber, checker = checkTrue) => {
 };
 
 function beginWork(returnFiber) {
+  const grandpa = returnFiber.return;
+  if (grandpa && !Fiber.isHostFiber(grandpa)) {
+    returnFiber.flags |= grandpa.flags & Placement;
+  }
+
+  if (
+    !returnFiber.isSelfStateChange &&
+    (returnFiber.flags & MarkReusableFiber) !== NoFlags &&
+    objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
+  ) {
+    return [...walkChildFiber(returnFiber)];
+  }
+
   const children = returnFiber.normalChildren;
   const result = [];
 
@@ -823,10 +835,6 @@ function beginWork(returnFiber) {
       returnFiber.child = fiber;
     } else {
       preFiber.sibling = fiber;
-    }
-
-    if (!Fiber.isHostFiber(returnFiber)) {
-      fiber.flags |= returnFiber.flags & Placement;
     }
 
     preFiber = fiber;
@@ -892,7 +900,7 @@ function finishedWork(fiber) {
         continue;
       }
 
-      if (testHostAttr(pKey)) {
+      if (testHostSpecialAttr(pKey)) {
         if (hostSpecialAttrSet.has(pKey)) {
           attrs.push(pKey, pValue);
         }
@@ -911,7 +919,7 @@ function finishedWork(fiber) {
         continue;
       }
 
-      if (testHostAttr(pKey)) {
+      if (testHostSpecialAttr(pKey)) {
         if (hostSpecialAttrSet.has(pKey)) {
           attrs.push(pKey, void 0);
         }
@@ -1072,12 +1080,12 @@ const commitRoot = () => {
 function forceRender(rootFiber) {
   let restoreDataFn;
 
-  queueMacrotask((deadline) => {
+  mainQueueMacrotask((deadline) => {
     restoreDataFn = hostConfig.genRestoreDataFn();
     return innerRender(deadline, rootFiber);
   });
 
-  queueMacrotask((deadline) => {
+  mainQueueMacrotask((deadline) => {
     const result = commitRoot(deadline);
     if (result === void 0 && restoreDataFn) {
       restoreDataFn();
