@@ -108,11 +108,11 @@
         return;
       }
 
-      let next;
-      const startTime = performance.now();
+      let next = null;
+      const startTime = Date.now();
       const deadline = {
         get didTimeout() {
-          return performance.now() - startTime > frameYieldMs;
+          return Date.now() - startTime > frameYieldMs;
         },
       };
 
@@ -122,7 +122,7 @@
         do {
           const work = scheduledQueue.shift();
           next = work(deadline);
-        } while (!next && !deadline.didTimeout && scheduledQueue.length);
+        } while (!next && scheduledQueue.length && !deadline.didTimeout);
       } finally {
         if (isFunction(next)) {
           scheduledQueue.unshift(next);
@@ -398,7 +398,7 @@
       child.parentNode.removeChild(child);
     },
     commitTextUpdate(node, content) {
-      node.data = content;
+      node.nodeValue = content;
     },
     commitInstanceUpdate(node, attrs) {
       for (let i = 0; i < attrs.length; i += 2) {
@@ -469,7 +469,10 @@
   const hostConfig = domHostConfig;
 
   let workInProgress = null;
-  const useFiber = () => {
+  const useFiber = (isInitHook) => {
+    if (isInitHook && !workInProgress.hookQueue) {
+      workInProgress.hookQueue = [];
+    }
     return workInProgress;
   };
 
@@ -489,7 +492,7 @@
   };
 
   const useReducer = (reducer, initialState) => {
-    const fiber = useFiber();
+    const fiber = useFiber(true);
     const innerIndex = fiber._StateIndex++;
     const { hookQueue } = fiber;
 
@@ -509,7 +512,7 @@
   };
 
   const useRef = (initialValue) => {
-    const fiber = useFiber();
+    const fiber = useFiber(true);
     const innerIndex = fiber._StateIndex++;
     const { hookQueue } = fiber;
 
@@ -557,7 +560,7 @@
   };
 
   const useEffect = (func, dep) => {
-    const fiber = useFiber();
+    const fiber = useFiber(true);
     const innerIndex = fiber._StateIndex++;
     const { hookQueue } = fiber;
 
@@ -688,6 +691,10 @@
     fiber.flags |= reference.flags & Placement;
   };
 
+  const NewFiber = 0b0000001;
+  const ReuseFiber = 0b0000010;
+  const RetainFiber = 0b00000100;
+
   class Fiber {
     key = null;
     ref = null;
@@ -697,10 +704,10 @@
     pendingProps = {};
     memoizedProps = {};
     memoizedState = null;
+    _StateIndex = 0;
 
     _index = 0;
     oldIndex = -1;
-    reuse = false;
     stateNode = null;
 
     root = null;
@@ -710,6 +717,7 @@
     deletions = null;
 
     flags = NoFlags;
+    reuseFlag = NewFiber;
     subtreeFlags = NoFlags;
 
     get index() {
@@ -725,14 +733,15 @@
         return [];
       }
 
-      const tempChildren = isHTMLTag(this.type)
+      let tempChildren = isHTMLTag(this.type)
         ? this.pendingProps.children
         : genComponentInnerElement(this);
 
       if (tempChildren === void 0) {
         return [];
       } else {
-        return [].concat(tempChildren).map(toElement);
+        tempChildren = isArray(tempChildren) ? tempChildren : [tempChildren];
+        return tempChildren.map(toElement);
       }
     }
 
@@ -770,8 +779,6 @@
         );
       } else if (Fiber.isHostFiber(this)) {
         this.stateNode = hostConfig.createInstance(this.type);
-      } else {
-        Fiber.initHookQueue(this);
       }
 
       if (this.stateNode) {
@@ -780,7 +787,11 @@
     }
 
     isDescendantOf(returnFiber) {
-      return this.nodeKey.startsWith(returnFiber.nodeKey);
+      return (
+        returnFiber.nodeKey.length < this.nodeKey.length &&
+        returnFiber.nodeKey ===
+          this.nodeKey.substring(0, returnFiber.nodeKey.length)
+      );
     }
 
     rerender() {
@@ -801,10 +812,6 @@
   Fiber.isPortal = (fiber) => fiber && fiber.pendingProps.__target;
   Fiber.isTextFiber = (fiber) => fiber && fiber.type === "text";
   Fiber.isHostFiber = (fiber) => fiber && typeof fiber.type === "string";
-  Fiber.initHookQueue = (fiber) => {
-    fiber._StateIndex = 0;
-    fiber.hookQueue = [];
-  };
   Fiber.initLifecycle = (fiber) => {
     fiber.onMounted = new Set();
     fiber.onUnMounted = new Set();
@@ -873,7 +880,7 @@
     if (fiber) {
       fiber.pendingProps = element.props;
       fiber.flags &= Update;
-      fiber.reuse = true;
+      fiber.reuseFlag = ReuseFiber;
       fiber.subtreeFlags = NoFlags;
 
       fiber.deletions = null;
@@ -923,7 +930,7 @@
     }
 
     if (
-      returnFiber.reuse &&
+      returnFiber.reuseFlag !== NewFiber &&
       !returnFiber.isSelfStateChange &&
       objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
     ) {
@@ -982,7 +989,7 @@
   };
 
   const finishedWork = (fiber) => {
-    if (!fiber.isInStateChangeScope) {
+    if (!fiber.isInStateChangeScope || fiber.reuseFlag === RetainFiber) {
       return;
     }
 
@@ -1065,7 +1072,7 @@
       }
     } else {
       if (
-        fiber.reuse &&
+        fiber.reuseFlag !== NewFiber &&
         !objectEqual(fiber.memoizedProps, fiber.pendingProps)
       ) {
         markUpdate(fiber);
@@ -1176,7 +1183,7 @@
         if (Fiber.isHostFiber(fiber)) {
           placementFiber(fiber, i);
         } else {
-          if (fiber.reuse) {
+          if (fiber.reuseFlag !== NewFiber) {
             dispatchHook(fiber, "onBeforeMove");
             dispatchHook(fiber, "onMoved", true);
           } else {
@@ -1198,6 +1205,7 @@
         fiber.flags &= ~MarkRef;
       }
 
+      fiber.reuseFlag = RetainFiber;
       fiber.flags = NoFlags;
       i += 1;
     }
@@ -1205,12 +1213,12 @@
     ConquerFiberQueue.length = 0;
   };
 
-  const forceRender = (rootFiber) => {
+  const forceRender = (renderRoot) => {
     let restoreDataFn;
 
     mainQueueMacrotask((deadline) => {
       restoreDataFn = hostConfig.genRestoreDataFn();
-      return innerRender(deadline, rootFiber);
+      return innerRender(deadline, renderRoot);
     });
 
     mainQueueMacrotask((deadline) => {
@@ -1222,25 +1230,27 @@
     });
   };
 
-  const innerRender = (deadline, rootFiber) => {
-    if (!rootFiber.generator) {
-      rootFiber.generator = walkFiber(rootFiber);
+  const innerRender = (deadline, renderRoot) => {
+    if (!renderRoot.generator) {
+      renderRoot.generator = walkFiber(renderRoot);
     }
 
     let taskObj;
-    let next = (deadline) => innerRender(deadline, rootFiber);
+    let next = (deadline) => innerRender(deadline, renderRoot);
 
     do {
-      taskObj = rootFiber.generator.next();
+      taskObj = renderRoot.generator.next();
 
       if (taskObj.done) {
-        rootFiber.generator = null;
+        renderRoot.generator = null;
       } else {
         if (
           taskObj.value.flags !== NoFlags ||
           Fiber.isHostFiber(taskObj.value)
         ) {
           collectConquerFiber(taskObj.value);
+        } else {
+          taskObj.value.reuseFlag = RetainFiber;
         }
 
         if (deadline.didTimeout) {

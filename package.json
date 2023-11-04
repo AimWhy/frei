@@ -1,6 +1,6 @@
 {
   "name": "@aimwhy/frei",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "jsx to fiber to dom",
   "module": "module.js",
   "main": "index.js",
