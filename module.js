@@ -175,6 +175,7 @@ const collectPaths = (targetElement, container, eventType) => {
       if (elementProps[captureName]) {
         paths.capture.unshift(elementProps[captureName]);
       }
+
       if (elementProps[bubbleName]) {
         paths.bubble.push(elementProps[bubbleName]);
       }
@@ -204,7 +205,7 @@ const triggerEventFlow = (paths, se) => {
     const callback = paths[i];
     callback.call(null, se);
     if (se.__stopPropagation) {
-      break;
+      return;
     }
   }
 };
@@ -292,19 +293,18 @@ const listDelimiterRE = /;(?![^(]*\))/g;
 const propertyDelimiterRE = /:([^]+)/;
 const styleCommentRE = /\/\*[^]*?\*\//g;
 const parseStringStyle = (cssText) => {
-  const ret = {};
-  cssText
+  return cssText
     .replace(styleCommentRE, "")
     .split(listDelimiterRE)
-    .forEach((item) => {
+    .reduce((acc, item) => {
       if (item) {
         const tmp = item.split(propertyDelimiterRE);
         if (tmp.length > 1) {
-          ret[tmp[0].trim()] = tmp[1].trim();
+          acc[tmp[0].trim()] = tmp[1].trim();
         }
       }
-    });
-  return ret;
+      return acc;
+    }, {});
 };
 
 const normalizeStyle = (value) => {
@@ -678,20 +678,21 @@ class Fiber {
   ref = null;
   type = null;
   pNodeKey = "";
+  nodeKey = "";
   pendingProps = {};
   memoizedProps = {};
   memoizedState = null;
 
   _index = 0;
   oldIndex = -1;
-  stateNode = null;
   reuse = false;
+  stateNode = null;
 
   root = null;
   child = null;
   return = null;
   sibling = null;
-  deletions = [];
+  deletions = null;
 
   flags = NoFlags;
   subtreeFlags = NoFlags;
@@ -705,23 +706,19 @@ class Fiber {
   }
 
   get normalChildren() {
-    let children = [];
     if (Fiber.isTextFiber(this)) {
-      return children;
+      return [];
     }
 
-    if (isHTMLTag(this.type)) {
-      if (this.pendingProps.children !== void 0) {
-        children = [].concat(this.pendingProps.children);
-      }
+    const tempChildren = isHTMLTag(this.type)
+      ? this.pendingProps.children
+      : genComponentInnerElement(this);
+
+    if (tempChildren === void 0) {
+      return [];
     } else {
-      const innerRootElement = genComponentInnerElement(this);
-      if (innerRootElement !== void 0) {
-        children = [].concat(innerRootElement);
-      }
+      return [].concat(tempChildren).map(toElement);
     }
-
-    return children.map(toElement);
   }
 
   get isSelfStateChange() {
@@ -731,20 +728,16 @@ class Fiber {
   get isInStateChangeScope() {
     if (this.isSelfStateChange) {
       return true;
-    } else if (!this.return) {
-      return false;
     } else {
-      return this.return.isInStateChangeScope;
+      return !this.return ? false : this.return.isInStateChangeScope;
     }
   }
 
   get isInPortalScope() {
     if (Fiber.isPortal(this)) {
       return true;
-    } else if (!this.return) {
-      return false;
     } else {
-      return this.return.isInPortalScope;
+      return !this.return ? false : this.return.isInPortalScope;
     }
   }
 
@@ -866,7 +859,7 @@ const createFiber = (element, key, pNodeKey = "") => {
     fiber.reuse = true;
     fiber.subtreeFlags = NoFlags;
 
-    fiber.deletions = [];
+    fiber.deletions = null;
 
     fiber.sibling = null;
     fiber.return = null;
@@ -960,8 +953,9 @@ const beginWork = (returnFiber) => {
     result.push(fiber);
   }
 
-  returnFiber.deletions = [...oldFiberMap.values()];
-  if (returnFiber.deletions.length) {
+  const deletions = [...oldFiberMap.values()];
+  if (deletions.length) {
+    returnFiber.deletions = deletions;
     markChildDeletion(returnFiber);
   }
 
@@ -1126,7 +1120,7 @@ const childDeletionFiber = (returnFiber) => {
       Fiber.ExistPool.delete(f.nodeKey);
     }
   }
-  returnFiber.deletions = [];
+  returnFiber.deletions = null;
 };
 
 const commitRoot = () => {
