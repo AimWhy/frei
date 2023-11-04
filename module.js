@@ -6,18 +6,15 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props = {}) => props.children;
 
-const NoFlags = 0b0000000;
-const Placement = 0b0000001;
-const Update = 0b0000010;
-const ChildDeletion = 0b0000100;
-const MarkRef = 0b001000;
-const MarkReusableFiber = 0b010000;
-
 const checkTrue = () => true;
 const makeMap = (list) => {
   const memo = new Set(list);
   return (val) => memo.has(val);
 };
+const isArray = (val) => Array.isArray(val);
+const isString = (val) => typeof val === "string";
+const isObject = (val) => val !== null && typeof val === "object";
+const isFunction = (val) => typeof val === "function";
 
 export const objectEqual = (object1, object2, isDeep) => {
   if (object1 === object2) {
@@ -94,7 +91,7 @@ const genQueueMacrotask = (macrotaskName) => {
 
   let isLoopRunning = false;
 
-  channel.port1.onmessage = function performWork() {
+  channel.port1.onmessage = () => {
     if (!scheduledQueue.length) {
       isLoopRunning = false;
       return;
@@ -114,9 +111,9 @@ const genQueueMacrotask = (macrotaskName) => {
       do {
         const work = scheduledQueue.shift();
         next = work(deadline);
-      } while (!deadline.didTimeout && scheduledQueue.length);
+      } while (!next && !deadline.didTimeout && scheduledQueue.length);
     } finally {
-      if (typeof next === "function") {
+      if (isFunction(next)) {
         scheduledQueue.unshift(next);
       }
 
@@ -132,6 +129,7 @@ const genQueueMacrotask = (macrotaskName) => {
 
   return (task) => {
     scheduledQueue.push(task);
+
     if (!isLoopRunning) {
       isLoopRunning = true;
       schedulePerform();
@@ -152,6 +150,7 @@ const eventTypeMap = {
   dblclick: ["onDblclickCapture", "onDblclick"],
   mousedown: ["onMousedownCapture", "onMousedown"],
   mouseup: ["onMouseupCapture", "onMouseup"],
+  mousemove: ["onMousemoveCapture", "onMousemove"],
   keydown: ["onKeydownCapture", "onKeydown"],
   keyup: ["onKeyupCapture", "onKeyup"],
   keypress: ["onKeypressCapture", "onKeypress"],
@@ -161,7 +160,7 @@ const eventTypeMap = {
   touchmove: ["onTouchmoveCapture", "onTouchmove"],
 };
 
-function collectPaths(targetElement, container, eventType) {
+const collectPaths = (targetElement, container, eventType) => {
   const paths = {
     capture: [],
     bubble: [],
@@ -172,24 +171,21 @@ function collectPaths(targetElement, container, eventType) {
     const elementProps = targetElement[elementPropsKey];
 
     if (elementProps && callbackNameList) {
-      callbackNameList.forEach((callbackName, i) => {
-        const eventCallback = elementProps[callbackName];
-        if (eventCallback) {
-          if (i === 0) {
-            paths.capture.unshift(eventCallback);
-          } else {
-            paths.bubble.push(eventCallback);
-          }
-        }
-      });
+      const [captureName, bubbleName] = callbackNameList;
+      if (elementProps[captureName]) {
+        paths.capture.unshift(elementProps[captureName]);
+      }
+      if (elementProps[bubbleName]) {
+        paths.bubble.push(elementProps[bubbleName]);
+      }
     }
     targetElement = targetElement.parentNode;
   }
 
   return paths;
-}
+};
 
-function createSyntheticEvent(e) {
+const createSyntheticEvent = (e) => {
   const syntheticEvent = e;
   const originStopPropagation = e.stopPropagation;
 
@@ -201,9 +197,9 @@ function createSyntheticEvent(e) {
     }
   };
   return syntheticEvent;
-}
+};
 
-function triggerEventFlow(paths, se) {
+const triggerEventFlow = (paths, se) => {
   for (let i = 0; i < paths.length; i++) {
     const callback = paths[i];
     callback.call(null, se);
@@ -211,9 +207,9 @@ function triggerEventFlow(paths, se) {
       break;
     }
   }
-}
+};
 
-function dispatchEvent(container, eventType, e) {
+const dispatchEvent = (container, eventType, e) => {
   const targetElement = e.target;
 
   if (!targetElement) {
@@ -228,13 +224,13 @@ function dispatchEvent(container, eventType, e) {
   if (!syntheticEvent.__stopPropagation) {
     triggerEventFlow(bubble, syntheticEvent);
   }
-}
+};
 
-function initEvent(container, eventType) {
+const initEvent = (container, eventType) => {
   container.addEventListener(eventType, (e) => {
     dispatchEvent(container, eventType, e);
   });
-}
+};
 
 const testHostSpecialAttr = (name) => /^on[A-Z]/.test(name);
 const hostSpecialAttrSet = new Set([
@@ -268,6 +264,91 @@ const eventCallback = (e) => {
   const pKey = `on${e.type[0].toUpperCase()}${e.type.slice(1)}`;
   if (e.target[elementPropsKey][pKey]) {
     e.target[elementPropsKey][pKey](e);
+  }
+};
+
+const normalizeClass = (value) => {
+  let res = "";
+  if (isString(value)) {
+    res = value;
+  } else if (isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const normalized = normalizeClass(value[i]);
+      if (normalized) {
+        res += normalized + " ";
+      }
+    }
+  } else if (isObject(value)) {
+    for (const name in value) {
+      if (value[name]) {
+        res += name + " ";
+      }
+    }
+  }
+  return res.trim();
+};
+
+const listDelimiterRE = /;(?![^(]*\))/g;
+const propertyDelimiterRE = /:([^]+)/;
+const styleCommentRE = /\/\*[^]*?\*\//g;
+const parseStringStyle = (cssText) => {
+  const ret = {};
+  cssText
+    .replace(styleCommentRE, "")
+    .split(listDelimiterRE)
+    .forEach((item) => {
+      if (item) {
+        const tmp = item.split(propertyDelimiterRE);
+        if (tmp.length > 1) {
+          ret[tmp[0].trim()] = tmp[1].trim();
+        }
+      }
+    });
+  return ret;
+};
+
+const normalizeStyle = (value) => {
+  if (isArray(value)) {
+    const res = {};
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      const normalized = isString(item)
+        ? parseStringStyle(item)
+        : normalizeStyle(item);
+
+      if (normalized) {
+        for (const key in normalized) {
+          res[key] = normalized[key];
+        }
+      }
+    }
+    return res;
+  } else if (isString(value)) {
+    return value;
+  } else if (isObject(value)) {
+    return value;
+  }
+};
+
+const camelizeRE = /-(\w)/g;
+const camelizePlacer = (_, c) => (c ? c.toUpperCase() : "");
+const camelize = (str) => {
+  return str.replace(camelizeRE, camelizePlacer);
+};
+
+const setStyle = (style, name, val) => {
+  if (isArray(val)) {
+    val.forEach((v) => setStyle(style, name, v));
+  } else {
+    if (val == null) {
+      val = "";
+    }
+
+    if (name.startsWith("--")) {
+      style.setProperty(name, val);
+    } else {
+      style[camelize(name)] = val;
+    }
   }
 };
 
@@ -316,7 +397,23 @@ const domHostConfig = {
         if (pValue === void 0) {
           node.removeAttribute(attrName);
         } else {
-          node.setAttribute(attrName, pValue);
+          switch (attrName) {
+            case "class":
+              node.className = normalizeClass(pValue);
+              break;
+            case "style":
+              const styleValue = normalizeStyle(pValue);
+              if (isString(styleValue)) {
+                node.style.cssText = styleValue;
+              } else {
+                for (const key in styleValue) {
+                  setStyle(node.style, key, styleValue[key]);
+                }
+              }
+              break;
+            default:
+              node.setAttribute(attrName, pValue);
+          }
         }
       }
     }
@@ -382,8 +479,7 @@ export const useReducer = (reducer, initialState) => {
   const { hookQueue, rerender } = fiber;
 
   if (hookQueue.length <= innerIndex) {
-    const state =
-      typeof initialState === "function" ? initialState() : initialState;
+    const state = isFunction(initialState) ? initialState() : initialState;
 
     const dispatch = (action) => {
       const newState = reducer(hookQueue[innerIndex].state, action);
@@ -411,7 +507,7 @@ export const useRef = (initialValue) => {
 
 export const useState = (initialState) => {
   return useReducer((state, action) => {
-    return typeof action === "function" ? action(state) : action;
+    return isFunction(action) ? action(state) : action;
   }, initialState);
 };
 
@@ -426,9 +522,7 @@ export const createContext = (initialState) => {
       }
 
       fiber.memoizedState ||= new Set();
-      fiber.memoizedState.forEach((f) => {
-        f.flags |= Update;
-      });
+      fiber.memoizedState.forEach(markUpdate);
       fiber.memoizedState.clear();
 
       return children;
@@ -453,7 +547,7 @@ export const useEffect = (func, dep) => {
   const { hookQueue } = fiber;
 
   if (hookQueue.length <= innerIndex) {
-    if (Array.isArray(dep)) {
+    if (isArray(dep)) {
       if (!dep.length) {
         fiber.onMounted.add(func);
       } else {
@@ -467,12 +561,7 @@ export const useEffect = (func, dep) => {
     hookQueue[innerIndex] = { func, dep };
   } else {
     const { dep: oldDep, func: oldFunc } = hookQueue[innerIndex];
-    if (
-      Array.isArray(dep) &&
-      Array.isArray(oldDep) &&
-      dep.length &&
-      oldDep.length
-    ) {
+    if (isArray(dep) && isArray(oldDep) && dep.length && oldDep.length) {
       fiber.onUpdated.delete(oldFunc);
 
       if (!objectEqual(oldDep, dep)) {
@@ -501,7 +590,7 @@ export const useSyncExternalStore = (subscribe, getSnapshot) => {
       forceUpdate({ inst });
     }
 
-    return subscribe(function handleStoreChange() {
+    return subscribe(() => {
       if (checkIfSnapshotChanged(inst)) {
         forceUpdate({ inst });
       }
@@ -515,7 +604,7 @@ const runner = (fiber, hookName) => {
   for (const hook of fiber[hookName]) {
     const destroy = hook(fiber);
 
-    if (typeof destroy === "function") {
+    if (isFunction(destroy)) {
       const cleanName =
         {
           onBeforeMove: "onMoved",
@@ -546,6 +635,40 @@ const dispatchHook = (fiber, hookName, async) => {
   }
 };
 
+const toElement = (item) => {
+  if (typeof item === "string" || typeof item === "number") {
+    return jsx("text", { content: item });
+  } else if (isArray(item)) {
+    return jsx(Fragment, { children: item });
+  } else if (!item || !item.type) {
+    return jsx("text", { content: "" });
+  } else {
+    return item;
+  }
+};
+
+const NoFlags = 0b0000000;
+const Placement = 0b0000001;
+const Update = 0b0000010;
+const ChildDeletion = 0b0000100;
+const MarkRef = 0b001000;
+
+const markUpdate = (fiber) => {
+  fiber.flags |= Update;
+};
+const markPlacement = (fiber) => {
+  fiber.flags |= Placement;
+};
+const markRef = (fiber) => {
+  fiber.flags |= MarkRef;
+};
+const markChildDeletion = (fiber) => {
+  fiber.flags |= ChildDeletion;
+};
+const inheritPlacement = (fiber, reference) => {
+  fiber.flags |= reference.flags & Placement;
+};
+
 class Fiber {
   key = null;
   ref = null;
@@ -558,6 +681,7 @@ class Fiber {
   _index = 0;
   oldIndex = -1;
   stateNode = null;
+  reuse = false;
 
   root = null;
   child = null;
@@ -581,10 +705,9 @@ class Fiber {
 
   rerender = () => {
     if (Fiber.isHostFiber(this)) {
-      console.warn(this.nodeKey);
       forceRender(this);
     } else {
-      this.flags |= Update;
+      markUpdate(this);
       Fiber.RerenderSet.add(this);
       queueMicrotaskOnce(batchRerender);
     }
@@ -615,19 +738,7 @@ class Fiber {
       }
     }
 
-    children = children.map((item) => {
-      if (typeof item === "string" || typeof item === "number") {
-        return jsx("text", { content: item });
-      } else if (Array.isArray(item)) {
-        return jsx(Fragment, { children: item });
-      } else if (!item || !item.type) {
-        return jsx("text", { content: "" });
-      } else {
-        return item;
-      }
-    });
-
-    return children;
+    return children.map(toElement);
   }
 
   get isSelfStateChange() {
@@ -645,7 +756,7 @@ class Fiber {
   }
 
   get isInPortalScope() {
-    if (this.pendingProps.__target) {
+    if (Fiber.isPortal(this)) {
       return true;
     } else if (!this.return) {
       return false;
@@ -654,10 +765,10 @@ class Fiber {
     }
   }
 
-  constructor(element, key, pNodeKey) {
+  constructor(element, key, pNodeKey, nodeKey) {
     this.key = key;
     this.pNodeKey = pNodeKey;
-    this.nodeKey = Fiber.genNodeKey(key, pNodeKey);
+    this.nodeKey = nodeKey;
     this.type = element.type;
     this.pendingProps = element.props;
     this.flags = Placement;
@@ -685,25 +796,26 @@ class Fiber {
 Fiber.ExistPool = new Map();
 Fiber.RerenderSet = new Set();
 Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
+Fiber.isPortal = (fiber) => fiber && fiber.pendingProps.__target;
 Fiber.isTextFiber = (fiber) => fiber && fiber.type === "text";
 Fiber.isHostFiber = (fiber) => fiber && typeof fiber.type === "string";
 
 const batchRerender = () => {
-  const mapCount = new Map();
+  const mapFiberCount = new Map();
   let commonReturnHost = null;
 
   label: for (const current of Fiber.RerenderSet) {
     let fiber = current;
     while (fiber) {
-      if (Fiber.isHostFiber(fiber)) {
-        const preCount = mapCount.get(fiber) || 0;
+      if (Fiber.isHostFiber(fiber) || Fiber.isPortal(fiber)) {
+        const preCount = mapFiberCount.get(fiber) || 0;
         const curCount = preCount + 1;
 
         if (curCount >= Fiber.RerenderSet.size) {
           commonReturnHost = fiber;
           break label;
         } else {
-          mapCount.set(fiber, curCount);
+          mapFiberCount.set(fiber, curCount);
         }
       }
       fiber = fiber.return;
@@ -731,37 +843,36 @@ function* walkFiberTree(returnFiber) {
   yield returnFiber;
 }
 
-function bubbleFlags(fiber) {
+const bubbleFlags = (fiber) => {
   let subtreeFlags = NoFlags;
   for (const child of walkChildFiber(fiber)) {
     subtreeFlags |= child.subtreeFlags;
     subtreeFlags |= child.flags;
   }
   fiber.subtreeFlags |= subtreeFlags;
-}
+};
 
-function createFiber(element, key, pNodeKey = "") {
+const createFiber = (element, key, pNodeKey = "") => {
   const nodeKey = Fiber.genNodeKey(key, pNodeKey);
+  let fiber = Fiber.ExistPool.get(nodeKey);
 
-  if (Fiber.ExistPool.has(nodeKey)) {
-    const fiber = Fiber.ExistPool.get(nodeKey);
+  if (fiber) {
     fiber.pendingProps = element.props;
     fiber.flags &= Update;
-    fiber.flags |= MarkReusableFiber;
+    fiber.reuse = true;
     fiber.subtreeFlags = NoFlags;
 
     fiber.deletions = [];
 
     fiber.sibling = null;
     fiber.return = null;
-
-    return fiber;
+  } else {
+    fiber = new Fiber(element, key, pNodeKey, nodeKey);
+    Fiber.ExistPool.set(nodeKey, fiber);
   }
 
-  const fiber = new Fiber(element, key, pNodeKey);
-  Fiber.ExistPool.set(nodeKey, fiber);
   return fiber;
-}
+};
 
 let CollectingFiberQueue = [];
 let ConquerFiberQueue = [];
@@ -769,10 +880,14 @@ const collectConquerFiber = (fiber) => {
   CollectingFiberQueue.push(fiber);
 };
 
-const findPreConquerFiber = (index, checker = checkTrue) => {
+const findPreConquerFiber = (index, returnFiber) => {
   for (let i = index - 1; -1 < i; i--) {
     const fiber = ConquerFiberQueue[i];
-    if (checker(fiber)) {
+    if (
+      Fiber.isHostFiber(fiber) &&
+      !fiber.isDescendantOf(returnFiber) &&
+      !fiber.isInPortalScope
+    ) {
       return fiber;
     }
   }
@@ -787,15 +902,15 @@ const findParentFiber = (fiber, checker = checkTrue) => {
   }
 };
 
-function beginWork(returnFiber) {
+const beginWork = (returnFiber) => {
   const grandpa = returnFiber.return;
   if (grandpa && !Fiber.isHostFiber(grandpa)) {
-    returnFiber.flags |= grandpa.flags & Placement;
+    inheritPlacement(returnFiber, grandpa);
   }
 
   if (
+    returnFiber.reuse &&
     !returnFiber.isSelfStateChange &&
-    (returnFiber.flags & MarkReusableFiber) !== NoFlags &&
     objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
   ) {
     return [...walkChildFiber(returnFiber)];
@@ -826,7 +941,7 @@ function beginWork(returnFiber) {
       fiber.oldIndex <= preOldIndex ||
       fiber.memoizedProps.__target !== fiber.pendingProps.__target
     ) {
-      fiber.flags |= Placement;
+      markPlacement(fiber);
     } else {
       preOldIndex = fiber.oldIndex;
     }
@@ -843,14 +958,13 @@ function beginWork(returnFiber) {
 
   returnFiber.deletions = [...oldFiberMap.values()];
   if (returnFiber.deletions.length) {
-    returnFiber.flags |= ChildDeletion;
+    markChildDeletion(returnFiber);
   }
 
   return result;
-}
+};
 
-function finishedWork(fiber) {
-  collectConquerFiber(fiber);
+const finishedWork = (fiber) => {
   if (!fiber.isInStateChangeScope) {
     return;
   }
@@ -863,26 +977,26 @@ function finishedWork(fiber) {
     const newRef = newProps.ref;
 
     fiber.ref = (instance) => {
-      if (typeof oldRef === "function") {
+      if (isFunction(oldRef)) {
         oldRef(null);
       } else if (oldRef && "current" in oldRef) {
         oldRef.current = null;
       }
 
-      if (typeof newRef === "function") {
+      if (isFunction(newRef)) {
         newRef(instance);
       } else if (newRef && "current" in newRef) {
         newRef.current = instance;
       }
     };
 
-    fiber.flags |= MarkRef;
+    markRef(fiber);
   }
 
   if (Fiber.isTextFiber(fiber)) {
     if (!oldProps || newProps.content !== oldProps.content) {
       fiber.memoizedState = newProps.content;
-      fiber.flags |= Update;
+      markUpdate(fiber);
     }
   } else if (isHTMLTag(fiber.type)) {
     const attrs = [];
@@ -930,26 +1044,23 @@ function finishedWork(fiber) {
 
     fiber.memoizedState = attrs;
     if (fiber.memoizedState.length) {
-      fiber.flags |= Update;
+      markUpdate(fiber);
     }
   } else {
-    if (
-      (fiber.flags & MarkReusableFiber) !== NoFlags &&
-      !objectEqual(fiber.memoizedProps, fiber.pendingProps)
-    ) {
-      fiber.flags |= Update;
+    if (fiber.reuse && !objectEqual(fiber.memoizedProps, fiber.pendingProps)) {
+      markUpdate(fiber);
     }
   }
 
   bubbleFlags(fiber);
   fiber.memoizedProps = fiber.pendingProps;
-}
+};
 
 function* walkFiber(returnFiber) {
   const fiberList = beginWork(returnFiber);
 
   for (const fiber of fiberList) {
-    if (Fiber.isTextFiber(fiber)) {
+    if (Fiber.isHostFiber(fiber) && fiber.pendingProps.children == null) {
       finishedWork(fiber);
       yield fiber;
     } else {
@@ -961,27 +1072,23 @@ function* walkFiber(returnFiber) {
   yield returnFiber;
 }
 
+const checkAnchor = (fiber) =>
+  Fiber.isHostFiber(fiber) || Fiber.isPortal(fiber);
+
 const placementFiber = (fiber, index) => {
-  const parentHostFiber = findParentFiber(
-    fiber,
-    (f) => Fiber.isHostFiber(f) || f.pendingProps.__target
-  );
+  const parentHostFiber = findParentFiber(fiber, checkAnchor);
 
   if (!parentHostFiber) {
     return;
   }
 
   // 它是一个 portal: 用带有 __target 指向的 stateNode
-  if (parentHostFiber.pendingProps.__target) {
+  if (Fiber.isPortal(parentHostFiber)) {
     hostConfig.toLast(fiber.stateNode, parentHostFiber.pendingProps.__target);
     return;
   }
 
-  const preHostFiber = findPreConquerFiber(
-    index,
-    (f) =>
-      Fiber.isHostFiber(f) && !f.isDescendantOf(fiber) && !f.isInPortalScope
-  );
+  const preHostFiber = findPreConquerFiber(index, fiber);
 
   if (preHostFiber && preHostFiber.isDescendantOf(parentHostFiber)) {
     hostConfig.toAfter(
@@ -1021,6 +1128,7 @@ const childDeletionFiber = (returnFiber) => {
 const commitRoot = () => {
   let i = 0;
   const len = ConquerFiberQueue.length;
+  console.log("ConquerFiberQueue: " + len);
 
   while (i < len) {
     const fiber = ConquerFiberQueue[i];
@@ -1048,7 +1156,7 @@ const commitRoot = () => {
       if (Fiber.isHostFiber(fiber)) {
         placementFiber(fiber, i);
       } else {
-        if ((fiber.flags & MarkReusableFiber) !== NoFlags) {
+        if (fiber.reuse) {
           dispatchHook(fiber, "onBeforeMove");
           dispatchHook(fiber, "onMoved", true);
         } else {
@@ -1077,7 +1185,7 @@ const commitRoot = () => {
   ConquerFiberQueue.length = 0;
 };
 
-function forceRender(rootFiber) {
+const forceRender = (rootFiber) => {
   let restoreDataFn;
 
   mainQueueMacrotask((deadline) => {
@@ -1092,7 +1200,7 @@ function forceRender(rootFiber) {
     }
     return result;
   });
-}
+};
 
 const innerRender = (deadline, rootFiber) => {
   if (!rootFiber.generator) {
@@ -1100,12 +1208,21 @@ const innerRender = (deadline, rootFiber) => {
   }
 
   let taskObj;
+  let next = (deadline) => innerRender(deadline, rootFiber);
+
   do {
     taskObj = rootFiber.generator.next();
+
     if (taskObj.done) {
       rootFiber.generator = null;
-    } else if (deadline.didTimeout) {
-      return (deadline) => innerRender(deadline, rootFiber);
+    } else {
+      if (taskObj.value.flags !== NoFlags || Fiber.isHostFiber(taskObj.value)) {
+        collectConquerFiber(taskObj.value);
+      }
+
+      if (deadline.didTimeout) {
+        return next;
+      }
     }
   } while (!taskObj.done);
 
@@ -1131,7 +1248,7 @@ export const createRoot = (container) => {
       );
       rootFiber.stateNode = container;
       rootFiber.root = rootFiber;
-      rootFiber.flags |= Update;
+      markUpdate(rootFiber);
       rootFiber.rerender();
     },
   };
