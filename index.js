@@ -780,7 +780,7 @@
         Fiber.RerenderSet.add(this);
         queueMicrotaskOnce(batchRerender);
       } else {
-        console.log(this.nodeKey);
+        // console.log(this.nodeKey);
         forceRender(this);
       }
     }
@@ -1129,7 +1129,7 @@
   const commitRoot = () => {
     let i = 0;
     const len = ConquerFiberQueue.length;
-    console.log("ConquerFiberQueue: " + len);
+    // console.log("ConquerFiberQueue: " + len);
 
     while (i < len) {
       const fiber = ConquerFiberQueue[i];
