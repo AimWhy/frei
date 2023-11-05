@@ -6,15 +6,11 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props = {}) => props.children;
 
-const checkTrue = () => true;
-const makeMap = (list) => {
-  const memo = new Set(list);
-  return (val) => memo.has(val);
-};
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isObject = (val) => val !== null && typeof val === "object";
 const isFunction = (val) => typeof val === "function";
+const returnTrue = () => true;
 
 export const objectEqual = (object1, object2, isDeep) => {
   if (object1 === object2) {
@@ -55,22 +51,18 @@ export const objectEqual = (object1, object2, isDeep) => {
   return true;
 };
 
-const isSpecialBooleanAttr = makeMap([
-  "itemscope",
-  "allowfullscreen",
-  "formnovalidate",
-  "ismap",
-  "nomodule",
-  "novalidate",
-  "readonly",
-]);
-const includeBooleanAttr = (value) => !!value || value === "";
+const isSpecialBooleanAttr = (val) =>
+  ({
+    itemscope: true,
+    allowfullscreen: true,
+    formnovalidate: true,
+    ismap: true,
+    nomodule: true,
+    novalidate: true,
+    readonly: true,
+  }[val] || false);
 
-const HTML_TAGS =
-  "html,body,base,head,link,meta,style,title,address,article,aside,footer,header,hgroup,h1,h2,h3,h4,h5,h6,nav,section,div,dd,dl,dt,figcaption,figure,picture,hr,img,li,main,ol,p,pre,ul,a,b,abbr,bdi,bdo,br,cite,code,data,dfn,em,i,kbd,mark,q,rp,rt,ruby,s,samp,small,span,strong,sub,sup,time,u,var,wbr,area,audio,map,track,video,embed,object,param,source,canvas,script,noscript,del,ins,caption,col,colgroup,table,thead,tbody,td,th,tr,button,datalist,fieldset,form,input,label,legend,meter,optgroup,option,output,progress,select,textarea,details,dialog,menu,summary,template,blockquote,iframe,tfoot".split(
-    ","
-  );
-const isHTMLTag = makeMap(HTML_TAGS);
+const includeBooleanAttr = (value) => !!value || value === "";
 
 const uniqueSet = new Set();
 const queueMicrotaskOnce = (func) => {
@@ -99,9 +91,10 @@ const genQueueMacrotask = (macrotaskName) => {
 
     let next = null;
     const startTime = Date.now();
+    const timeoutTime = startTime + frameYieldMs;
     const deadline = {
       get didTimeout() {
-        return Date.now() - startTime > frameYieldMs;
+        return Date.now() > timeoutTime;
       },
     };
 
@@ -718,7 +711,7 @@ class Fiber {
       return [];
     }
 
-    let tempChildren = isHTMLTag(this.type)
+    let tempChildren = Fiber.isHostFiber(this)
       ? this.pendingProps.children
       : genComponentInnerElement(this);
 
@@ -804,6 +797,9 @@ Fiber.initLifecycle = (fiber) => {
   fiber.onMoved = new Set();
 };
 
+const isContainerFiber = (fiber) =>
+  Fiber.isHostFiber(fiber) || Fiber.isPortal(fiber);
+
 const batchRerender = () => {
   const mapFiberCount = new Map();
   let commonReturnHost = null;
@@ -811,7 +807,7 @@ const batchRerender = () => {
   label: for (const current of Fiber.RerenderSet) {
     let fiber = current;
     while (fiber) {
-      if (Fiber.isHostFiber(fiber) || Fiber.isPortal(fiber)) {
+      if (isContainerFiber(fiber)) {
         const preCount = mapFiberCount.get(fiber) || 0;
         const curCount = preCount + 1;
 
@@ -897,7 +893,7 @@ const findPreConquerFiber = (index, returnFiber) => {
   }
 };
 
-const findParentFiber = (fiber, checker = checkTrue) => {
+const findParentFiber = (fiber, checker = returnTrue) => {
   while (fiber.return) {
     if (checker(fiber.return)) {
       return fiber.return;
@@ -1003,7 +999,7 @@ const finishedWork = (fiber) => {
       fiber.memoizedState = newProps.content;
       markUpdate(fiber);
     }
-  } else if (isHTMLTag(fiber.type)) {
+  } else if (Fiber.isHostFiber(fiber)) {
     const attrs = [];
 
     for (const [pKey, pValue] of Object.entries(newProps)) {
@@ -1068,7 +1064,7 @@ function* walkFiber(returnFiber) {
   const fiberList = beginWork(returnFiber);
 
   for (const fiber of fiberList) {
-    if (Fiber.isHostFiber(fiber) && fiber.pendingProps.children == null) {
+    if (Fiber.isHostFiber(fiber) && fiber.pendingProps.children === void 0) {
       finishedWork(fiber);
       yield fiber;
     } else {
@@ -1080,11 +1076,8 @@ function* walkFiber(returnFiber) {
   yield returnFiber;
 }
 
-const checkAnchor = (fiber) =>
-  Fiber.isHostFiber(fiber) || Fiber.isPortal(fiber);
-
 const placementFiber = (fiber, index) => {
-  const parentHostFiber = findParentFiber(fiber, checkAnchor);
+  const parentHostFiber = findParentFiber(fiber, isContainerFiber);
 
   if (!parentHostFiber) {
     return;
@@ -1140,8 +1133,9 @@ const commitRoot = () => {
 
   while (i < len) {
     const fiber = ConquerFiberQueue[i];
+    const isHostFiber = Fiber.isHostFiber(fiber);
 
-    if (Fiber.isHostFiber(fiber)) {
+    if (isHostFiber) {
       hostConfig.updateInstanceProps(fiber.stateNode, fiber.memoizedProps);
     }
 
@@ -1151,7 +1145,7 @@ const commitRoot = () => {
     }
 
     if ((fiber.flags & Update) !== NoFlags) {
-      if (Fiber.isHostFiber(fiber)) {
+      if (isHostFiber) {
         updateHostFiber(fiber);
       } else {
         dispatchHook(fiber, "onBeforeUpdate");
@@ -1161,7 +1155,7 @@ const commitRoot = () => {
     }
 
     if ((fiber.flags & Placement) !== NoFlags) {
-      if (Fiber.isHostFiber(fiber)) {
+      if (isHostFiber) {
         placementFiber(fiber, i);
       } else {
         if (fiber.reuseFlag !== NewFiber) {
@@ -1177,7 +1171,7 @@ const commitRoot = () => {
     }
 
     if ((fiber.flags & MarkRef) !== NoFlags) {
-      if (Fiber.isHostFiber(fiber)) {
+      if (isHostFiber) {
         fiber.ref(fiber.stateNode);
       } else {
         fiber.ref(fiber);
