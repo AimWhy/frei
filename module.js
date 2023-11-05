@@ -10,7 +10,6 @@ const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isObject = (val) => val !== null && typeof val === "object";
 const isFunction = (val) => typeof val === "function";
-const returnTrue = () => true;
 
 export const objectEqual = (object1, object2, isDeep) => {
   if (object1 === object2) {
@@ -528,10 +527,8 @@ export const createContext = (initialState) => {
 
 export const useContext = (context) => {
   const fiber = useFiber();
-  const providerFiber = findParentFiber(
-    fiber,
-    (f) => f.type === context.Provider
-  );
+  const checkProvider = (f) => f.type === context.Provider;
+  const providerFiber = findParentFiber(fiber, checkProvider);
   providerFiber.memoizedState.add(fiber);
 
   return providerFiber.pendingProps.value;
@@ -697,7 +694,7 @@ class Fiber {
   child = null;
   return = null;
   sibling = null;
-  deletions = null;
+  deletionMap = null;
 
   flags = NoFlags;
   reuseFlag = NewFiber;
@@ -777,7 +774,7 @@ class Fiber {
 Fiber.ExistPool = new Map();
 Fiber.RerenderSet = new Set();
 Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
-Fiber.isPortal = (fiber) => fiber && fiber.pendingProps.__target;
+Fiber.isPortal = (fiber) => !!fiber.pendingProps.__target;
 Fiber.initLifecycle = (fiber) => {
   fiber.onMounted = new Set();
   fiber.onUnMounted = new Set();
@@ -786,18 +783,8 @@ Fiber.initLifecycle = (fiber) => {
   fiber.onBeforeMove = new Set();
   fiber.onMoved = new Set();
 };
-Fiber.isInStateChangeScope = (fiber) => {
-  if (fiber.isSelfStateChange) {
-    return true;
-  }
-  return !fiber.return ? false : Fiber.isInStateChangeScope(fiber.return);
-};
-Fiber.isInPortalScope = (fiber) => {
-  if (Fiber.isPortal(fiber)) {
-    return true;
-  }
-  return !fiber.return ? false : Fiber.isInPortalScope(fiber.return);
-};
+
+const checkSelfStateChange = (f) => f.isSelfStateChange;
 
 const isContainerFiber = (fiber) =>
   fiber.tag === HostComponent || Fiber.isPortal(fiber);
@@ -853,7 +840,7 @@ const createFiber = (element, key, pNodeKey = "") => {
     fiber.pendingProps = element.props;
     fiber.flags &= Update;
     fiber.reuseFlag = ReuseFiber;
-    fiber.deletions = null;
+    fiber.deletionMap = null;
 
     fiber.sibling = null;
     fiber.return = null;
@@ -877,15 +864,15 @@ const findPreConquerFiber = (index, returnFiber) => {
     if (
       fiber.tag !== FunctionComponent &&
       !fiber.isDescendantOf(returnFiber) &&
-      !Fiber.isInPortalScope(fiber)
+      !findParentFiber(fiber, Fiber.isPortal, true)
     ) {
       return fiber;
     }
   }
 };
 
-const findParentFiber = (fiber, checker = returnTrue) => {
-  let current = fiber.return;
+const findParentFiber = (fiber, checker, includeCurrent) => {
+  let current = includeCurrent ? fiber : fiber.return;
   while (current) {
     if (checker(current)) {
       return current;
@@ -912,7 +899,7 @@ const beginWork = (returnFiber) => {
   const result = [];
 
   const oldFiberMap = new Map();
-  // child 还保留着旧子fiber的引用，用来收集 deletions
+  // child 还保留着旧子fiber的引用，用来收集 deletionMap
   for (const child of walkChildFiber(returnFiber)) {
     oldFiberMap.set(child.nodeKey, child);
   }
@@ -948,9 +935,8 @@ const beginWork = (returnFiber) => {
     result.push(fiber);
   }
 
-  const deletions = [...oldFiberMap.values()];
-  if (deletions.length) {
-    returnFiber.deletions = deletions;
+  if (oldFiberMap.size) {
+    returnFiber.deletionMap = oldFiberMap;
     markChildDeletion(returnFiber);
   }
 
@@ -958,7 +944,10 @@ const beginWork = (returnFiber) => {
 };
 
 const finishedWork = (fiber) => {
-  if (fiber.reuseFlag === RetainFiber || !Fiber.isInStateChangeScope(fiber)) {
+  if (
+    fiber.reuseFlag === RetainFiber ||
+    !findParentFiber(fiber, checkSelfStateChange, true)
+  ) {
     return;
   }
 
@@ -1105,7 +1094,7 @@ const updateHostFiber = (fiber) => {
 };
 
 const childDeletionFiber = (returnFiber) => {
-  for (const fiber of returnFiber.deletions) {
+  for (const fiber of returnFiber.deletionMap.values()) {
     for (const f of walkFiberTree(fiber)) {
       if (f.tag !== FunctionComponent) {
         hostConfig.removeChild(f.stateNode);
@@ -1117,7 +1106,7 @@ const childDeletionFiber = (returnFiber) => {
       Fiber.ExistPool.delete(f.nodeKey);
     }
   }
-  returnFiber.deletions = null;
+  returnFiber.deletionMap = null;
 };
 
 const commitRoot = () => {
