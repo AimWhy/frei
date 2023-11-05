@@ -60,7 +60,7 @@ const isSpecialBooleanAttr = (val) =>
     nomodule: true,
     novalidate: true,
     readonly: true,
-  }[val] || false);
+  }[val]);
 
 const includeBooleanAttr = (value) => !!value || value === "";
 
@@ -98,7 +98,7 @@ const genQueueMacrotask = (macrotaskName) => {
       },
     };
 
-    console.count(macrotaskName);
+    // console.count(macrotaskName);
 
     try {
       do {
@@ -459,7 +459,7 @@ const genComponentInnerElement = (fiber) => {
   const preFiber = workInProgress;
 
   try {
-    fiber._StateIndex = 0;
+    fiber.__StateIndex = 0;
     workInProgress = fiber;
     result = fiber.type(fiber.pendingProps);
   } finally {
@@ -471,7 +471,7 @@ const genComponentInnerElement = (fiber) => {
 
 export const useReducer = (reducer, initialState) => {
   const fiber = useFiber(true);
-  const innerIndex = fiber._StateIndex++;
+  const innerIndex = fiber.__StateIndex++;
   const { hookQueue } = fiber;
 
   if (hookQueue.length <= innerIndex) {
@@ -491,7 +491,7 @@ export const useReducer = (reducer, initialState) => {
 
 export const useRef = (initialValue) => {
   const fiber = useFiber(true);
-  const innerIndex = fiber._StateIndex++;
+  const innerIndex = fiber.__StateIndex++;
   const { hookQueue } = fiber;
 
   if (hookQueue.length <= innerIndex) {
@@ -539,7 +539,7 @@ export const useContext = (context) => {
 
 export const useEffect = (func, dep) => {
   const fiber = useFiber(true);
-  const innerIndex = fiber._StateIndex++;
+  const innerIndex = fiber.__StateIndex++;
   const { hookQueue } = fiber;
 
   if (hookQueue.length <= innerIndex) {
@@ -673,18 +673,23 @@ const NewFiber = 0b0000001;
 const ReuseFiber = 0b0000010;
 const RetainFiber = 0b00000100;
 
+const FunctionComponent = 0b0000001;
+const HostComponent = 0b0000010;
+const HostText = 0b00000100;
+
 class Fiber {
   key = null;
   ref = null;
   type = null;
+  tag = null;
   pNodeKey = "";
   nodeKey = "";
   pendingProps = {};
   memoizedProps = {};
   memoizedState = null;
-  _StateIndex = 0;
+  __StateIndex = 0;
 
-  _index = 0;
+  __index = 0;
   oldIndex = -1;
   stateNode = null;
 
@@ -696,51 +701,36 @@ class Fiber {
 
   flags = NoFlags;
   reuseFlag = NewFiber;
-  subtreeFlags = NoFlags;
 
   get index() {
-    return this._index;
+    return this.__index;
   }
   set index(value) {
-    this.oldIndex = this.oldIndex === -1 ? value : this._index;
-    this._index = value;
+    this.oldIndex = this.oldIndex === -1 ? value : this.__index;
+    this.__index = value;
   }
 
   get normalChildren() {
-    if (Fiber.isTextFiber(this)) {
+    if (this.tag === HostText) {
       return [];
     }
 
-    let tempChildren = Fiber.isHostFiber(this)
-      ? this.pendingProps.children
-      : genComponentInnerElement(this);
+    let tempChildren =
+      this.tag === HostComponent
+        ? this.pendingProps.children
+        : genComponentInnerElement(this);
 
     if (tempChildren === void 0) {
       return [];
     } else {
-      tempChildren = isArray(tempChildren) ? tempChildren : [tempChildren];
-      return tempChildren.map(toElement);
+      return isArray(tempChildren)
+        ? tempChildren.map(toElement)
+        : [toElement(tempChildren)];
     }
   }
 
   get isSelfStateChange() {
     return (this.flags & Update) !== NoFlags;
-  }
-
-  get isInStateChangeScope() {
-    if (this.isSelfStateChange) {
-      return true;
-    } else {
-      return !this.return ? false : this.return.isInStateChangeScope;
-    }
-  }
-
-  get isInPortalScope() {
-    if (Fiber.isPortal(this)) {
-      return true;
-    } else {
-      return !this.return ? false : this.return.isInPortalScope;
-    }
   }
 
   constructor(element, key, pNodeKey, nodeKey) {
@@ -751,33 +741,35 @@ class Fiber {
     this.pendingProps = element.props;
     this.flags = Placement;
 
-    if (Fiber.isTextFiber(this)) {
-      this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
-    } else if (Fiber.isHostFiber(this)) {
-      this.stateNode = hostConfig.createInstance(this.type);
-    }
+    if (isString(this.type)) {
+      if (this.type === "text") {
+        this.tag = HostText;
+        this.stateNode = hostConfig.createTextInstance(
+          this.pendingProps.content
+        );
+      } else {
+        this.tag = HostComponent;
+        this.stateNode = hostConfig.createInstance(this.type);
+      }
 
-    if (this.stateNode) {
       this.stateNode.__fiber = this;
+    } else {
+      this.tag = FunctionComponent;
     }
   }
 
   isDescendantOf(returnFiber) {
-    return (
-      returnFiber.nodeKey.length < this.nodeKey.length &&
-      returnFiber.nodeKey ===
-        this.nodeKey.substring(0, returnFiber.nodeKey.length)
-    );
+    return !!findParentFiber(this, (f) => f === returnFiber);
   }
 
   rerender() {
-    if (Fiber.isHostFiber(this)) {
-      console.log(this.nodeKey);
-      forceRender(this);
-    } else {
+    if (this.tag === FunctionComponent) {
       markUpdate(this);
       Fiber.RerenderSet.add(this);
       queueMicrotaskOnce(batchRerender);
+    } else {
+      console.log(this.nodeKey);
+      forceRender(this);
     }
   }
 }
@@ -786,8 +778,6 @@ Fiber.ExistPool = new Map();
 Fiber.RerenderSet = new Set();
 Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
 Fiber.isPortal = (fiber) => fiber && fiber.pendingProps.__target;
-Fiber.isTextFiber = (fiber) => fiber && fiber.type === "text";
-Fiber.isHostFiber = (fiber) => fiber && typeof fiber.type === "string";
 Fiber.initLifecycle = (fiber) => {
   fiber.onMounted = new Set();
   fiber.onUnMounted = new Set();
@@ -796,9 +786,21 @@ Fiber.initLifecycle = (fiber) => {
   fiber.onBeforeMove = new Set();
   fiber.onMoved = new Set();
 };
+Fiber.isInStateChangeScope = (fiber) => {
+  if (fiber.isSelfStateChange) {
+    return true;
+  }
+  return !fiber.return ? false : Fiber.isInStateChangeScope(fiber.return);
+};
+Fiber.isInPortalScope = (fiber) => {
+  if (Fiber.isPortal(fiber)) {
+    return true;
+  }
+  return !fiber.return ? false : Fiber.isInPortalScope(fiber.return);
+};
 
 const isContainerFiber = (fiber) =>
-  Fiber.isHostFiber(fiber) || Fiber.isPortal(fiber);
+  fiber.tag === HostComponent || Fiber.isPortal(fiber);
 
 const batchRerender = () => {
   const mapFiberCount = new Map();
@@ -843,15 +845,6 @@ function* walkFiberTree(returnFiber) {
   yield returnFiber;
 }
 
-const bubbleFlags = (fiber) => {
-  let subtreeFlags = NoFlags;
-  for (const child of walkChildFiber(fiber)) {
-    subtreeFlags |= child.subtreeFlags;
-    subtreeFlags |= child.flags;
-  }
-  fiber.subtreeFlags |= subtreeFlags;
-};
-
 const createFiber = (element, key, pNodeKey = "") => {
   const nodeKey = Fiber.genNodeKey(key, pNodeKey);
   let fiber = Fiber.ExistPool.get(nodeKey);
@@ -860,8 +853,6 @@ const createFiber = (element, key, pNodeKey = "") => {
     fiber.pendingProps = element.props;
     fiber.flags &= Update;
     fiber.reuseFlag = ReuseFiber;
-    fiber.subtreeFlags = NoFlags;
-
     fiber.deletions = null;
 
     fiber.sibling = null;
@@ -884,9 +875,9 @@ const findPreConquerFiber = (index, returnFiber) => {
   for (let i = index - 1; -1 < i; i--) {
     const fiber = ConquerFiberQueue[i];
     if (
-      Fiber.isHostFiber(fiber) &&
+      fiber.tag !== FunctionComponent &&
       !fiber.isDescendantOf(returnFiber) &&
-      !fiber.isInPortalScope
+      !Fiber.isInPortalScope(fiber)
     ) {
       return fiber;
     }
@@ -894,17 +885,18 @@ const findPreConquerFiber = (index, returnFiber) => {
 };
 
 const findParentFiber = (fiber, checker = returnTrue) => {
-  while (fiber.return) {
-    if (checker(fiber.return)) {
-      return fiber.return;
+  let current = fiber.return;
+  while (current) {
+    if (checker(current)) {
+      return current;
     }
-    fiber = fiber.return;
+    current = current.return;
   }
 };
 
 const beginWork = (returnFiber) => {
   const grandpa = returnFiber.return;
-  if (grandpa && !Fiber.isHostFiber(grandpa)) {
+  if (grandpa && grandpa.tag === FunctionComponent) {
     inheritPlacement(returnFiber, grandpa);
   }
 
@@ -913,7 +905,7 @@ const beginWork = (returnFiber) => {
     !returnFiber.isSelfStateChange &&
     objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
   ) {
-    return [...walkChildFiber(returnFiber)];
+    return walkChildFiber(returnFiber);
   }
 
   const children = returnFiber.normalChildren;
@@ -966,7 +958,7 @@ const beginWork = (returnFiber) => {
 };
 
 const finishedWork = (fiber) => {
-  if (!fiber.isInStateChangeScope || fiber.reuseFlag === RetainFiber) {
+  if (fiber.reuseFlag === RetainFiber || !Fiber.isInStateChangeScope(fiber)) {
     return;
   }
 
@@ -994,12 +986,12 @@ const finishedWork = (fiber) => {
     markRef(fiber);
   }
 
-  if (Fiber.isTextFiber(fiber)) {
+  if (fiber.tag === HostText) {
     if (!oldProps || newProps.content !== oldProps.content) {
       fiber.memoizedState = newProps.content;
       markUpdate(fiber);
     }
-  } else if (Fiber.isHostFiber(fiber)) {
+  } else if (fiber.tag === HostComponent) {
     const attrs = [];
 
     for (const [pKey, pValue] of Object.entries(newProps)) {
@@ -1056,7 +1048,6 @@ const finishedWork = (fiber) => {
     }
   }
 
-  bubbleFlags(fiber);
   fiber.memoizedProps = fiber.pendingProps;
 };
 
@@ -1064,7 +1055,10 @@ function* walkFiber(returnFiber) {
   const fiberList = beginWork(returnFiber);
 
   for (const fiber of fiberList) {
-    if (Fiber.isHostFiber(fiber) && fiber.pendingProps.children === void 0) {
+    if (
+      fiber.tag !== FunctionComponent &&
+      fiber.pendingProps.children === void 0
+    ) {
       finishedWork(fiber);
       yield fiber;
     } else {
@@ -1103,7 +1097,7 @@ const placementFiber = (fiber, index) => {
 };
 
 const updateHostFiber = (fiber) => {
-  if (Fiber.isTextFiber(fiber)) {
+  if (fiber.tag === HostText) {
     hostConfig.commitTextUpdate(fiber.stateNode, fiber.memoizedState);
   } else {
     hostConfig.commitInstanceUpdate(fiber.stateNode, fiber.memoizedState);
@@ -1113,7 +1107,7 @@ const updateHostFiber = (fiber) => {
 const childDeletionFiber = (returnFiber) => {
   for (const fiber of returnFiber.deletions) {
     for (const f of walkFiberTree(fiber)) {
-      if (Fiber.isHostFiber(f)) {
+      if (f.tag !== FunctionComponent) {
         hostConfig.removeChild(f.stateNode);
       } else {
         dispatchHook(f, "onUnMounted", true);
@@ -1133,9 +1127,9 @@ const commitRoot = () => {
 
   while (i < len) {
     const fiber = ConquerFiberQueue[i];
-    const isHostFiber = Fiber.isHostFiber(fiber);
+    const isHostFiber = fiber.tag !== FunctionComponent;
 
-    if (isHostFiber) {
+    if (fiber.tag === HostComponent) {
       hostConfig.updateInstanceProps(fiber.stateNode, fiber.memoizedProps);
     }
 
@@ -1219,7 +1213,10 @@ const innerRender = (deadline, renderRoot) => {
     if (taskObj.done) {
       renderRoot.generator = null;
     } else {
-      if (taskObj.value.flags !== NoFlags || Fiber.isHostFiber(taskObj.value)) {
+      if (
+        taskObj.value.flags !== NoFlags ||
+        taskObj.value.tag !== FunctionComponent
+      ) {
         collectConquerFiber(taskObj.value);
       } else {
         taskObj.value.reuseFlag = RetainFiber;
