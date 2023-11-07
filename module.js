@@ -1156,9 +1156,13 @@ const commitRoot = (ConquerFiberQueue) => {
 };
 
 const forceRender = (renderRoot) => {
+  if(renderRoot.ConquerFiberQueue) {
+    return;
+  }
   mainQueueMacrotask((deadline) => {
     renderRoot.ConquerFiberQueue = [];
     renderRoot.restoreDataFn = hostConfig.genRestoreDataFn();
+    console.log("forceRender", renderRoot.nodeKey);
     return innerRender(deadline, renderRoot);
   });
 };
@@ -1187,7 +1191,11 @@ const innerRender = (deadline, renderRoot) => {
     if (taskObj.done) {
       renderRoot.generator = null;
       return () => {
+
         commitRoot(renderRoot.ConquerFiberQueue);
+        console.log("finished forceRender", renderRoot.nodeKey);
+
+        renderRoot.ConquerFiberQueue = null;
         if (renderRoot.restoreDataFn) {
           renderRoot.restoreDataFn();
         }
