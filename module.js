@@ -1156,19 +1156,10 @@ const commitRoot = (ConquerFiberQueue) => {
 };
 
 const forceRender = (renderRoot) => {
-  let restoreDataFn;
-
   mainQueueMacrotask((deadline) => {
-    restoreDataFn = hostConfig.genRestoreDataFn();
     renderRoot.ConquerFiberQueue = [];
+    renderRoot.restoreDataFn = hostConfig.genRestoreDataFn();
     return innerRender(deadline, renderRoot);
-  });
-
-  mainQueueMacrotask((deadline) => {
-    commitRoot(renderRoot.ConquerFiberQueue);
-    if (restoreDataFn) {
-      restoreDataFn();
-    }
   });
 };
 
@@ -1195,6 +1186,12 @@ const innerRender = (deadline, renderRoot) => {
 
     if (taskObj.done) {
       renderRoot.generator = null;
+      return () => {
+        commitRoot(renderRoot.ConquerFiberQueue);
+        if (renderRoot.restoreDataFn) {
+          renderRoot.restoreDataFn();
+        }
+      };
     } else {
       const [fiber, isLeaf] = taskObj.value;
       finishedWork(fiber);
