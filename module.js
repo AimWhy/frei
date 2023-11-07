@@ -686,7 +686,7 @@ class Fiber {
   memoizedState = null;
   __StateIndex = 0;
 
-  __index = 0;
+  index = -1;
   oldIndex = -1;
   __refer = null;
   stateNode = null;
@@ -699,14 +699,6 @@ class Fiber {
 
   flags = NoFlags;
   reuseFlag = NewFiber;
-
-  get index() {
-    return this.__index;
-  }
-  set index(value) {
-    this.oldIndex = this.oldIndex === -1 ? value : this.__index;
-    this.__index = value;
-  }
 
   get normalChildren() {
     if (this.tag === HostText) {
@@ -761,14 +753,23 @@ class Fiber {
   }
 
   rerender() {
+    if (Fiber.scheduler || !Fiber.ExistPool.has(this.nodeKey)) {
+      return;
+    }
+
     if (this.tag === FunctionComponent) {
-      markUpdate(this);
       Fiber.RerenderSet.add(this);
       queueMicrotaskOnce(batchRerender);
     } else {
-      if (Fiber.ExistPool.has(this.nodeKey)) {
-        forceRender(this);
-      }
+      Fiber.scheduler = {
+        preHostFiber: null,
+        MutationQueue: [],
+        gen: walkFiber(this),
+        next: (deadline) => innerRender(deadline, this),
+        restoreDataFn: hostConfig.genRestoreDataFn(),
+      };
+
+      mainQueueMacrotask(Fiber.scheduler.next);
     }
   }
 }
@@ -802,6 +803,7 @@ const batchRerender = () => {
   let commonReturnHost = null;
 
   label: for (const current of Fiber.RerenderSet) {
+    markUpdate(current);
     let fiber = current;
     while (fiber) {
       if (isContainerFiber(fiber)) {
@@ -907,6 +909,7 @@ const beginWork = (returnFiber) => {
     oldFiberMap.delete(fiber.nodeKey);
 
     if (
+      fiber.oldIndex === -1 ||
       fiber.oldIndex <= preOldIndex ||
       fiber.memoizedProps.__target !== fiber.pendingProps.__target
     ) {
@@ -921,6 +924,7 @@ const beginWork = (returnFiber) => {
       preFiber.sibling = fiber;
     }
 
+    fiber.oldIndex = fiber.index;
     preFiber = fiber;
     result.push(fiber);
   }
@@ -1097,13 +1101,9 @@ const childDeletionFiber = (returnFiber) => {
   returnFiber.deletionMap = null;
 };
 
-const commitRoot = (ConquerFiberQueue) => {
-  let i = 0;
-  const len = ConquerFiberQueue.length;
-  console.log("ConquerFiberQueue: " + len);
-
-  while (i < len) {
-    const fiber = ConquerFiberQueue[i];
+const commitRoot = (mutationList = []) => {
+  console.log("mutationList: " + mutationList.length);
+  for (const fiber of mutationList) {
     const isHostFiber = fiber.tag !== FunctionComponent;
 
     if (fiber.tag === HostComponent) {
@@ -1150,21 +1150,9 @@ const commitRoot = (ConquerFiberQueue) => {
 
       fiber.flags &= ~MarkRef;
     }
-    Fiber.clean(fiber);
-    i++;
-  }
-};
 
-const forceRender = (renderRoot) => {
-  if(renderRoot.ConquerFiberQueue) {
-    return;
+    Fiber.clean(fiber);
   }
-  mainQueueMacrotask((deadline) => {
-    renderRoot.ConquerFiberQueue = [];
-    renderRoot.restoreDataFn = hostConfig.genRestoreDataFn();
-    console.log("forceRender", renderRoot.nodeKey);
-    return innerRender(deadline, renderRoot);
-  });
 };
 
 const markPreHostRefer = (leafChild, preHostFiber) => {
@@ -1179,54 +1167,50 @@ const markPreHostRefer = (leafChild, preHostFiber) => {
   }
 };
 
-const innerRender = (deadline, renderRoot) => {
-  const gen = (renderRoot.generator =
-    renderRoot.generator || walkFiber(renderRoot));
+const innerRender = (deadline) => {
+  const scheduler = Fiber.scheduler;
+  let obj = null;
 
-  let taskObj;
-  let next = (deadline) => innerRender(deadline, renderRoot);
   do {
-    taskObj = gen.next();
+    obj = scheduler.gen.next();
 
-    if (taskObj.done) {
-      renderRoot.generator = null;
+    if (obj.done) {
       return () => {
+        commitRoot(scheduler.MutationQueue);
 
-        commitRoot(renderRoot.ConquerFiberQueue);
-        console.log("finished forceRender", renderRoot.nodeKey);
-
-        renderRoot.ConquerFiberQueue = null;
-        if (renderRoot.restoreDataFn) {
-          renderRoot.restoreDataFn();
+        if (scheduler.restoreDataFn) {
+          scheduler.restoreDataFn();
         }
+
+        Fiber.scheduler = null;
       };
-    } else {
-      const [fiber, isLeaf] = taskObj.value;
-      finishedWork(fiber);
-
-      if (isLeaf) {
-        fiber.__refer = gen.preHostFiber;
-        markPreHostRefer(fiber, gen.preHostFiber);
-      }
-
-      if (fiber.flags !== NoFlags) {
-        renderRoot.ConquerFiberQueue.push(fiber);
-      } else {
-        Fiber.clean(fiber);
-      }
-
-      if (
-        fiber.tag !== FunctionComponent &&
-        !findParentFiber(fiber, Fiber.isPortal, true)
-      ) {
-        gen.preHostFiber = fiber;
-      }
-
-      if (deadline.didTimeout) {
-        return next;
-      }
     }
-  } while (!taskObj.done);
+
+    const [fiber, isLeaf] = obj.value;
+    finishedWork(fiber);
+
+    if (isLeaf) {
+      fiber.__refer = scheduler.preHostFiber;
+      markPreHostRefer(fiber, scheduler.preHostFiber);
+    }
+
+    if (fiber.flags !== NoFlags) {
+      scheduler.MutationQueue.push(fiber);
+    } else {
+      Fiber.clean(fiber);
+    }
+
+    if (
+      fiber.tag !== FunctionComponent &&
+      !findParentFiber(fiber, Fiber.isPortal, true)
+    ) {
+      scheduler.preHostFiber = fiber;
+    }
+
+    if (deadline.didTimeout) {
+      return scheduler.next;
+    }
+  } while (!obj.done);
 };
 
 export const createRoot = (container) => {
