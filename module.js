@@ -51,15 +51,15 @@ export const objectEqual = (object1, object2, isDeep) => {
 };
 
 const isSpecialBooleanAttr = (val) =>
-  ({
-    itemscope: true,
-    allowfullscreen: true,
-    formnovalidate: true,
-    ismap: true,
-    nomodule: true,
-    novalidate: true,
-    readonly: true,
-  }[val]);
+({
+  itemscope: true,
+  allowfullscreen: true,
+  formnovalidate: true,
+  ismap: true,
+  nomodule: true,
+  novalidate: true,
+  readonly: true,
+}[val]);
 
 const includeBooleanAttr = (value) => !!value || value === "";
 
@@ -476,6 +476,7 @@ export const useReducer = (reducer, initialState) => {
   if (hookQueue.length <= innerIndex) {
     const state = isFunction(initialState) ? initialState() : initialState;
 
+    // todo: 协调阶段，其他事件修改了state，需要重新执行
     const dispatch = (action) => {
       const newState = reducer(hookQueue[innerIndex].state, action);
       hookQueue[innerIndex].state = newState;
@@ -758,6 +759,7 @@ class Fiber {
     }
 
     if (this.tag === FunctionComponent) {
+      markUpdate(this);
       Fiber.RerenderSet.add(this);
       queueMicrotaskOnce(batchRerender);
     } else {
@@ -803,7 +805,6 @@ const batchRerender = () => {
   let commonReturnHost = null;
 
   label: for (const current of Fiber.RerenderSet) {
-    markUpdate(current);
     let fiber = current;
     while (fiber) {
       if (isContainerFiber(fiber)) {
@@ -1036,7 +1037,7 @@ function* genFiberTree(returnFiber) {
 
   while (fiber) {
     isLeaf = false;
-    yield* walkFiberTree(fiber);
+    yield* genFiberTree(fiber);
     fiber = fiber.sibling;
   }
 
