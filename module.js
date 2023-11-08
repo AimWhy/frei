@@ -476,10 +476,13 @@ export const useReducer = (reducer, initialState) => {
   if (hookQueue.length <= innerIndex) {
     const state = isFunction(initialState) ? initialState() : initialState;
 
-    // todo: 协调阶段，其他事件修改了state，需要重新执行
+    // 协调阶段，其他事件修改了state，需要排队到下一个时间循环
     const dispatch = (action) => {
-      const newState = reducer(hookQueue[innerIndex].state, action);
-      hookQueue[innerIndex].state = newState;
+      fiber.updateQueue.push(() => {
+        const newState = reducer(hookQueue[innerIndex].state, action);
+        hookQueue[innerIndex].state = newState;
+      });
+
       fiber.rerender();
     };
 
@@ -686,6 +689,7 @@ class Fiber {
   memoizedProps = {};
   memoizedState = null;
   __StateIndex = 0;
+  updateQueue = [];
 
   index = -1;
   oldIndex = -1;
@@ -759,7 +763,10 @@ class Fiber {
     }
 
     if (this.tag === FunctionComponent) {
+      this.updateQueue.forEach((f) => f());
       markUpdate(this);
+      this.updateQueue.length = 0;
+
       Fiber.RerenderSet.add(this);
       queueMicrotaskOnce(batchRerender);
     } else {

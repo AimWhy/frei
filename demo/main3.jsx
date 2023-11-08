@@ -114,10 +114,9 @@ const listReducer = (state, action) => {
           }
         : state;
     case "REMOVE": {
-      const idx = data.findIndex((d) => d.id === action.id);
 
       return {
-        data: [...data.slice(0, idx), ...data.slice(idx + 1)],
+        data: data.filter(item => item.id !== action.id),
         selected,
       };
     }
