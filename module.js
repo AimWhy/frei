@@ -51,15 +51,15 @@ export const objectEqual = (object1, object2, isDeep) => {
 };
 
 const isSpecialBooleanAttr = (val) =>
-({
-  itemscope: true,
-  allowfullscreen: true,
-  formnovalidate: true,
-  ismap: true,
-  nomodule: true,
-  novalidate: true,
-  readonly: true,
-}[val]);
+  ({
+    itemscope: true,
+    allowfullscreen: true,
+    formnovalidate: true,
+    ismap: true,
+    nomodule: true,
+    novalidate: true,
+    readonly: true,
+  }[val]);
 
 const includeBooleanAttr = (value) => !!value || value === "";
 
@@ -120,6 +120,9 @@ const genQueueMacrotask = (macrotaskName) => {
   const schedulePerform = () => channel.port2.postMessage(null);
 
   return (task) => {
+    if (scheduledQueue.includes(task)) {
+      return;
+    }
     scheduledQueue.push(task);
 
     if (!isLoopRunning) {
@@ -763,12 +766,8 @@ class Fiber {
     }
 
     if (this.tag === FunctionComponent) {
-      this.updateQueue.forEach((f) => f());
-      markUpdate(this);
-      this.updateQueue.length = 0;
-
       Fiber.RerenderSet.add(this);
-      queueMicrotaskOnce(batchRerender);
+      mainQueueMacrotask(batchRerender);
     } else {
       Fiber.scheduler = {
         preHostFiber: null,
@@ -812,6 +811,9 @@ const batchRerender = () => {
   let commonReturnHost = null;
 
   label: for (const current of Fiber.RerenderSet) {
+    current.updateQueue.forEach((fn) => fn());
+    current.updateQueue.length = 0;
+    markUpdate(current);
     let fiber = current;
     while (fiber) {
       if (isContainerFiber(fiber)) {
@@ -1034,6 +1036,10 @@ const finishedWork = (fiber) => {
   }
 
   fiber.memoizedProps = fiber.pendingProps;
+  // 事件变动了，没有记录flag, 需要更新存储
+  if (fiber.tag === HostComponent) {
+    hostConfig.updateInstanceProps(fiber.stateNode, fiber.memoizedProps);
+  }
 };
 
 function* genFiberTree(returnFiber) {
@@ -1105,10 +1111,6 @@ const commitRoot = (mutationList = []) => {
   console.log("mutationList: " + mutationList.length);
   for (const fiber of mutationList) {
     const isHostFiber = fiber.tag !== FunctionComponent;
-
-    if (fiber.tag === HostComponent) {
-      hostConfig.updateInstanceProps(fiber.stateNode, fiber.memoizedProps);
-    }
 
     if ((fiber.flags & ChildDeletion) !== NoFlags) {
       childDeletionFiber(fiber);
