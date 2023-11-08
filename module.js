@@ -764,7 +764,7 @@ class Fiber {
       Fiber.scheduler = {
         preHostFiber: null,
         MutationQueue: [],
-        gen: walkFiber(this),
+        gen: genFiberTree(this),
         next: (deadline) => innerRender(deadline, this),
         restoreDataFn: hostConfig.genRestoreDataFn(),
       };
@@ -884,11 +884,10 @@ const beginWork = (returnFiber) => {
     !returnFiber.isSelfStateChange &&
     objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
   ) {
-    return walkChildFiber(returnFiber);
+    return;
   }
 
   const children = returnFiber.normalChildren;
-  const result = [];
 
   const oldFiberMap = new Map();
   // child 还保留着旧子fiber的引用，用来收集 deletionMap
@@ -926,15 +925,12 @@ const beginWork = (returnFiber) => {
 
     fiber.oldIndex = fiber.index;
     preFiber = fiber;
-    result.push(fiber);
   }
 
   if (oldFiberMap.size) {
     returnFiber.deletionMap = oldFiberMap;
     markChildDeletion(returnFiber);
   }
-
-  return result;
 };
 
 const finishedWork = (fiber) => {
@@ -1032,20 +1028,16 @@ const finishedWork = (fiber) => {
   fiber.memoizedProps = fiber.pendingProps;
 };
 
-function* walkFiber(returnFiber) {
-  const fiberList = beginWork(returnFiber);
-  let isLeaf = true;
+function* genFiberTree(returnFiber) {
+  beginWork(returnFiber);
 
-  for (const fiber of fiberList) {
+  let isLeaf = true;
+  let fiber = returnFiber.child;
+
+  while (fiber) {
     isLeaf = false;
-    if (
-      fiber.tag !== FunctionComponent &&
-      fiber.pendingProps.children === void 0
-    ) {
-      yield [fiber, true];
-    } else {
-      yield* walkFiber(fiber);
-    }
+    yield* walkFiberTree(fiber);
+    fiber = fiber.sibling;
   }
 
   yield [returnFiber, isLeaf];
