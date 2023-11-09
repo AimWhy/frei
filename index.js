@@ -692,9 +692,9 @@
   const ReuseFiber = 0b0000010;
   const RetainFiber = 0b00000100;
 
-  const FunctionComponent = 0b0000001;
+  const HostText = 0b00000000;
   const HostComponent = 0b0000010;
-  const HostText = 0b00000100;
+  const FunctionComponent = 0b0000100;
 
   const NoPortal = 0b0000000;
   const IsPortal = 0b0000001;
@@ -708,7 +708,7 @@
     key = null;
     ref = null;
     type = null;
-    tag = 0;
+    tag = 0b000;
     pNodeKey = "";
     nodeKey = "";
     pendingProps = {};
@@ -1005,7 +1005,8 @@
       } else if (fiber.tag === HostComponent) {
         const attrs = [];
 
-        for (const [pKey, pValue] of Object.entries(newProps)) {
+        for (const pKey in newProps) {
+          const pValue = newProps[pKey];
           const oldPValue = oldProps[pKey];
           delete oldProps[pKey];
 
@@ -1032,7 +1033,7 @@
           }
         }
 
-        for (const [pKey] of Object.entries(oldProps)) {
+        for (const pKey in oldProps) {
           if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
             continue;
           }
