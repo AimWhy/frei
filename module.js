@@ -639,14 +639,14 @@ const dispatchHook = (fiber, hookName, async) => {
 
 const toElement = (item) => {
   const itemType = typeof item;
-  if (itemType === "string" || itemType === "number") {
+  if (itemType === "object" && item.type) {
+    return item;
+  } else if (itemType === "string" || itemType === "number") {
     return jsx("text", { content: item });
   } else if (isArray(item)) {
     return jsx(Fragment, { children: item });
-  } else if (!item || !item.type) {
-    return jsx("text", { content: "" });
   } else {
-    return item;
+    return jsx("text", { content: "" });
   }
 };
 
@@ -746,6 +746,7 @@ class Fiber {
 
     if (this.type === "text") {
       this.tagType = HostText;
+      this.memoizedProps = this.pendingProps;
       this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
     } else if (isString(this.type)) {
       this.tagType = HostComponent;
@@ -912,7 +913,6 @@ const beginWork = (returnFiber) => {
       "#" +
       (element.key != null ? element.key : index);
     const fiber = createFiber(element, key, returnFiber.nodeKey);
-    fiber.root = returnFiber.root;
     fiber.index = index;
     fiber.return = returnFiber;
     deletionSet.delete(fiber);
@@ -1058,6 +1058,9 @@ function* genFiberTree(returnFiber) {
   let fiber = returnFiber.child;
 
   while (fiber) {
+    isLeaf = false;
+    fiber.root = returnFiber.root;
+
     if (returnFiber.tagType === FunctionComponent) {
       inheritPlacement(fiber, returnFiber);
     }
@@ -1072,8 +1075,6 @@ function* genFiberTree(returnFiber) {
     ) {
       fiber.stateFlag = ReturnStateChange;
     }
-
-    isLeaf = false;
 
     if (fiber.tagType === HostText) {
       yield [fiber, true];
