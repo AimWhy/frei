@@ -985,11 +985,16 @@ const finishedWork = (fiber) => {
       }
     } else if (fiber.tagType === HostComponent) {
       const attrs = [];
-      const newKeySet = new Set();
+      const SkipSymbol = Symbol('skip');
+
       for (const pKey in newProps) {
         const pValue = newProps[pKey];
-        const oldPValue = oldProps[pKey];
-        newKeySet.add(pKey);
+        let oldPValue = void 0;
+
+        if (pKey in oldProps) {
+          oldPValue = oldProps[pKey];
+          oldProps[pKey] = SkipSymbol;
+        }
 
         if (
           pKey === "children" ||
@@ -1019,7 +1024,7 @@ const finishedWork = (fiber) => {
           pKey === "children" ||
           pKey === "ref" ||
           pKey[0] === "_" ||
-          newKeySet.has(pKey)
+          oldProps[pKey] === SkipSymbol
         ) {
           continue;
         }
