@@ -524,7 +524,7 @@ export const createContext = (initialState) => {
       }
 
       fiber.memoizedState ||= new Set();
-      fiber.memoizedState.forEach((f) => f.stateFlag === SelfStateChange);
+      fiber.memoizedState.forEach((f) => { f.stateFlag = SelfStateChange; });
       fiber.memoizedState.clear();
 
       return children;
@@ -639,7 +639,7 @@ const dispatchHook = (fiber, hookName, async) => {
 
 const toElement = (item) => {
   const itemType = typeof item;
-  if (itemType === "object" && item.type) {
+  if (item && itemType === "object" && item.type) {
     return item;
   } else if (itemType === "string" || itemType === "number") {
     return jsx("text", { content: item });
@@ -672,27 +672,27 @@ const inheritPlacement = (fiber, reference) => {
   fiber.flags |= reference.flags & Placement;
 };
 
-const NewFiber = 0b0000001;
-const ReuseFiber = 0b0000010;
-const RetainFiber = 0b00000100;
+const NewFiber = Symbol('NewFiber');
+const ReuseFiber = Symbol('ReuseFiber');
+const RetainFiber = Symbol('RetainFiber');
 
-const HostText = 0b00000000;
-const HostComponent = 0b0000001;
-const FunctionComponent = 0b0000010;
+const HostText = Symbol('HostText');
+const HostComponent = Symbol('HostComponent');
+const FunctionComponent = Symbol('FunctionComponent');
 
-const NoPortal = 0b0000000;
-const IsPortal = 0b0000001;
-const InPortal = 0b0000010;
+const NoPortal = Symbol('NoPortal');
+const IsPortal = Symbol('IsPortal');
+const InPortal = Symbol('InPortal');
 
-const NoStateChange = 0b0000000;
-const SelfStateChange = 0b0000001;
-const ReturnStateChange = 0b000010;
+const NoStateChange = Symbol('NoStateChange');
+const SelfStateChange = Symbol('SelfStateChange');
+const ReturnStateChange = Symbol('ReturnStateChange');
 
 class Fiber {
   key = null;
   ref = null;
   type = null;
-  tagType = 0;
+  tagType = null;
   pNodeKey = "";
   nodeKey = "";
   pendingProps = {};

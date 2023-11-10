@@ -2,10 +2,10 @@
   typeof exports === "object" && typeof module !== "undefined"
     ? factory(exports)
     : typeof define === "function" && define.amd
-    ? define(["exports"], factory)
-    : ((global =
+      ? define(["exports"], factory)
+      : ((global =
         typeof globalThis !== "undefined" ? globalThis : global || self),
-      factory((global.frei = {})));
+        factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
 
@@ -61,16 +61,16 @@
     return true;
   };
 
-  const isSpecialBooleanAttr = (val) =>
-    ({
-      itemscope: true,
-      allowfullscreen: true,
-      formnovalidate: true,
-      ismap: true,
-      nomodule: true,
-      novalidate: true,
-      readonly: true,
-    }[val]);
+  const SpecialBooleanAttr = new Set([
+    "itemscope",
+    "allowfullscreen",
+    "formnovalidate",
+    "ismap",
+    "nomodule",
+    "novalidate",
+    "readonly",
+  ]);
+  const isSpecialBooleanAttr = (val) => SpecialBooleanAttr.has(val);
 
   const includeBooleanAttr = (value) => !!value || value === "";
 
@@ -221,11 +221,7 @@
       return console.warn("事件不存在target", e);
     }
 
-    const { bubble, capture } = collectPaths(
-      targetElement,
-      container,
-      eventType
-    );
+    const { bubble, capture } = collectPaths(targetElement, container, eventType);
     const syntheticEvent = createSyntheticEvent(e);
 
     triggerEventFlow(capture, syntheticEvent);
@@ -294,7 +290,7 @@
         }
       }
     }
-    return res.trim();
+    return res;
   };
 
   const listDelimiterRE = /;(?![^(]*\))/g;
@@ -361,13 +357,12 @@
   };
 
   const domHostConfig = {
+    attrMap: {
+      className: "class",
+      htmlFor: "for",
+    },
     fixAttrName(key) {
-      return (
-        {
-          className: "class",
-          htmlFor: "for",
-        }[key] || key
-      );
+      return this.attrMap[key] || key;
     },
     createInstance(type) {
       return document.createElement(type);
@@ -540,7 +535,7 @@
         }
 
         fiber.memoizedState ||= new Set();
-        fiber.memoizedState.forEach((f) => f.stateFlag === SelfStateChange);
+        fiber.memoizedState.forEach((f) => { f.stateFlag = SelfStateChange; });
         fiber.memoizedState.clear();
 
         return children;
@@ -655,14 +650,14 @@
 
   const toElement = (item) => {
     const itemType = typeof item;
-    if (itemType === "string" || itemType === "number") {
+    if (item && itemType === "object" && item.type) {
+      return item;
+    } else if (itemType === "string" || itemType === "number") {
       return jsx("text", { content: item });
     } else if (isArray(item)) {
       return jsx(Fragment, { children: item });
-    } else if (!item || !item.type) {
-      return jsx("text", { content: "" });
     } else {
-      return item;
+      return jsx("text", { content: "" });
     }
   };
 
@@ -688,27 +683,27 @@
     fiber.flags |= reference.flags & Placement;
   };
 
-  const NewFiber = 0b0000001;
-  const ReuseFiber = 0b0000010;
-  const RetainFiber = 0b00000100;
+  const NewFiber = Symbol('NewFiber');
+  const ReuseFiber = Symbol('ReuseFiber');
+  const RetainFiber = Symbol('RetainFiber');
 
-  const HostText = 0b00000000;
-  const HostComponent = 0b0000010;
-  const FunctionComponent = 0b0000100;
+  const HostText = Symbol('HostText');
+  const HostComponent = Symbol('HostComponent');
+  const FunctionComponent = Symbol('FunctionComponent');
 
-  const NoPortal = 0b0000000;
-  const IsPortal = 0b0000001;
-  const InPortal = 0b0000010;
+  const NoPortal = Symbol('NoPortal');
+  const IsPortal = Symbol('IsPortal');
+  const InPortal = Symbol('InPortal');
 
-  const NoStateChange = 0b0000000;
-  const SelfStateChange = 0b0000001;
-  const ReturnStateChange = 0b000010;
+  const NoStateChange = Symbol('NoStateChange');
+  const SelfStateChange = Symbol('SelfStateChange');
+  const ReturnStateChange = Symbol('ReturnStateChange');
 
   class Fiber {
     key = null;
     ref = null;
     type = null;
-    tag = 0b000;
+    tagType = null;
     pNodeKey = "";
     nodeKey = "";
     pendingProps = {};
@@ -734,12 +729,12 @@
     stateFlag = NoStateChange;
 
     get normalChildren() {
-      if (this.tag === HostText) {
+      if (this.tagType === HostText) {
         return [];
       }
 
       let tempChildren =
-        this.tag === HostComponent
+        this.tagType === HostComponent
           ? this.pendingProps.children
           : genComponentInnerElement(this);
 
@@ -761,16 +756,14 @@
       this.flags = Placement;
 
       if (this.type === "text") {
-        this.tag = HostText;
-        this.stateNode = hostConfig.createTextInstance(
-          this.pendingProps.content
-        );
+        this.tagType = HostText;
+        this.memoizedProps = this.pendingProps;
+        this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
       } else if (isString(this.type)) {
-        this.tag = HostComponent;
+        this.tagType = HostComponent;
         this.stateNode = hostConfig.createInstance(this.type);
-        this.stateNode.__fiber = this;
       } else {
-        this.tag = FunctionComponent;
+        this.tagType = FunctionComponent;
       }
     }
 
@@ -783,7 +776,7 @@
         return;
       }
 
-      if (this.tag === FunctionComponent) {
+      if (this.tagType === FunctionComponent) {
         Fiber.RerenderSet.add(this);
         mainQueueMacrotask(batchRerender);
       } else {
@@ -811,7 +804,7 @@
     fiber.stateFlag = NoStateChange;
 
     // 事件变动了，没有记录flag, 需要更新存储
-    if (fiber.tag === HostComponent) {
+    if (fiber.tagType === HostComponent) {
       hostConfig.updateInstanceProps(fiber.stateNode, fiber.memoizedProps);
     }
   };
@@ -825,7 +818,7 @@
   };
 
   const isContainerFiber = (fiber) =>
-    fiber.tag === HostComponent || fiber.portalFlag === IsPortal;
+    fiber.tagType === HostComponent || fiber.portalFlag === IsPortal;
 
   const batchRerender = () => {
     const mapFiberCount = new Map();
@@ -931,7 +924,6 @@
         "#" +
         (element.key != null ? element.key : index);
       const fiber = createFiber(element, key, returnFiber.nodeKey);
-      fiber.root = returnFiber.root;
       fiber.index = index;
       fiber.return = returnFiber;
       deletionSet.delete(fiber);
@@ -997,18 +989,18 @@
         markUpdate(fiber);
       }
 
-      if (fiber.tag === HostText) {
+      if (fiber.tagType === HostText) {
         if (!oldProps || newProps.content !== oldProps.content) {
           fiber.memoizedState = newProps.content;
           markUpdate(fiber);
         }
-      } else if (fiber.tag === HostComponent) {
+      } else if (fiber.tagType === HostComponent) {
         const attrs = [];
-
+        const newKeySet = new Set();
         for (const pKey in newProps) {
           const pValue = newProps[pKey];
           const oldPValue = oldProps[pKey];
-          delete oldProps[pKey];
+          newKeySet.add(pKey);
 
           if (
             pKey === "children" ||
@@ -1034,7 +1026,12 @@
         }
 
         for (const pKey in oldProps) {
-          if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
+          if (
+            pKey === "children" ||
+            pKey === "ref" ||
+            pKey[0] === "_" ||
+            newKeySet.has(pKey)
+          ) {
             continue;
           }
 
@@ -1072,27 +1069,25 @@
     let fiber = returnFiber.child;
 
     while (fiber) {
-      if (returnFiber.tag === FunctionComponent) {
+      isLeaf = false;
+      fiber.root = returnFiber.root;
+
+      if (returnFiber.tagType === FunctionComponent) {
         inheritPlacement(fiber, returnFiber);
       }
 
-      if (
-        fiber.portalFlag === NoPortal &&
-        returnFiber.portalFlag !== NoPortal
-      ) {
+      if (returnFiber.portalFlag !== NoPortal && fiber.portalFlag === NoPortal) {
         fiber.portalFlag = InPortal;
       }
 
       if (
-        fiber.stateFlag === NoStateChange &&
-        returnFiber.stateFlag !== NoStateChange
+        returnFiber.stateFlag !== NoStateChange &&
+        fiber.stateFlag === NoStateChange
       ) {
         fiber.stateFlag = ReturnStateChange;
       }
 
-      isLeaf = false;
-
-      if (fiber.tag === HostText) {
+      if (fiber.tagType === HostText) {
         yield [fiber, true];
       } else {
         yield* genFiberTree(fiber);
@@ -1131,7 +1126,7 @@
   };
 
   const updateHostFiber = (fiber) => {
-    if (fiber.tag === HostText) {
+    if (fiber.tagType === HostText) {
       hostConfig.commitTextUpdate(fiber.stateNode, fiber.memoizedState);
     } else {
       hostConfig.commitInstanceUpdate(fiber.stateNode, fiber.memoizedState);
@@ -1141,7 +1136,7 @@
   const childDeletionFiber = (returnFiber) => {
     for (const fiber of returnFiber.deletionSet) {
       for (const f of walkFiberTree(fiber)) {
-        if (f.tag !== FunctionComponent) {
+        if (f.tagType !== FunctionComponent) {
           hostConfig.removeChild(f.stateNode);
         } else {
           dispatchHook(f, "onUnMounted", true);
@@ -1154,9 +1149,9 @@
     returnFiber.deletionSet.clear();
   };
 
-  const commitRoot = (mutationList = []) => {
-    for (const fiber of mutationList) {
-      const isHostFiber = fiber.tag !== FunctionComponent;
+  const commitRoot = () => {
+    for (const fiber of Fiber.scheduler.MutationQueue) {
+      const isHostFiber = fiber.tagType !== FunctionComponent;
 
       if ((fiber.flags & ChildDeletion) !== NoFlags) {
         childDeletionFiber(fiber);
@@ -1224,7 +1219,7 @@
 
       if (obj.done) {
         return () => {
-          commitRoot(scheduler.MutationQueue);
+          commitRoot();
 
           if (scheduler.restoreDataFn) {
             scheduler.restoreDataFn();
@@ -1249,7 +1244,7 @@
         Fiber.clean(fiber);
       }
 
-      if (fiber.tag !== FunctionComponent && fiber.portalFlag === NoPortal) {
+      if (fiber.tagType !== FunctionComponent && fiber.portalFlag === NoPortal) {
         scheduler.preHostFiber = fiber;
       }
 
@@ -1275,7 +1270,9 @@
           },
           key
         );
+
         rootFiber.stateNode = container;
+        container.__rootFiber = rootFiber;
         rootFiber.root = rootFiber;
         rootFiber.stateFlag = SelfStateChange;
         rootFiber.rerender();
