@@ -1196,8 +1196,9 @@ const commitRoot = () => {
   }
 };
 
-const markPreHostRefer = (leafChild, preHostFiber) => {
+const markPreHostRefer = (leafChild) => {
   let current = leafChild;
+  const preHostFiber = leafChild.__refer;
   while (
     current.return &&
     !current.return.__refer &&
@@ -1205,6 +1206,9 @@ const markPreHostRefer = (leafChild, preHostFiber) => {
   ) {
     current.return.__refer = preHostFiber;
     current = current.return;
+    if (current.portalFlag === IsPortal) {
+      return;
+    }
   }
 };
 
@@ -1231,9 +1235,16 @@ const innerRender = (deadline) => {
 
     finishedWork(fiber);
 
+    const portalParent =
+      fiber.portalFlag === InPortal
+        ? findParentFiber(fiber, (f) => f.portalFlag === IsPortal)
+        : null;
+
     if (isLeaf) {
-      fiber.__refer = scheduler.preHostFiber;
-      markPreHostRefer(fiber, scheduler.preHostFiber);
+      fiber.__refer = !portalParent
+        ? scheduler.preHostFiber
+        : portalParent.__preHostFiber;
+      markPreHostRefer(fiber);
     }
 
     if (fiber.flags !== NoFlags) {
@@ -1242,8 +1253,12 @@ const innerRender = (deadline) => {
       Fiber.clean(fiber, false);
     }
 
-    if (fiber.tagType !== FunctionComponent && fiber.portalFlag === NoPortal) {
-      scheduler.preHostFiber = fiber;
+    if (fiber.tagType !== FunctionComponent) {
+      if (!portalParent) {
+        scheduler.preHostFiber = fiber;
+      } else {
+        portalParent.__preHostFiber = fiber;
+      }
     }
 
     if (deadline.didTimeout) {

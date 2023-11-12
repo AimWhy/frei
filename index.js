@@ -2,10 +2,10 @@
   typeof exports === "object" && typeof module !== "undefined"
     ? factory(exports)
     : typeof define === "function" && define.amd
-      ? define(["exports"], factory)
-      : ((global =
+    ? define(["exports"], factory)
+    : ((global =
         typeof globalThis !== "undefined" ? globalThis : global || self),
-        factory((global.frei = {})));
+      factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
 
@@ -221,7 +221,11 @@
       return console.warn("事件不存在target", e);
     }
 
-    const { bubble, capture } = collectPaths(targetElement, container, eventType);
+    const { bubble, capture } = collectPaths(
+      targetElement,
+      container,
+      eventType
+    );
     const syntheticEvent = createSyntheticEvent(e);
 
     triggerEventFlow(capture, syntheticEvent);
@@ -535,7 +539,9 @@
         }
 
         fiber.memoizedState ||= new Set();
-        fiber.memoizedState.forEach((f) => { f.stateFlag = SelfStateChange; });
+        fiber.memoizedState.forEach((f) => {
+          f.stateFlag = SelfStateChange;
+        });
         fiber.memoizedState.clear();
 
         return children;
@@ -683,21 +689,21 @@
     fiber.flags |= reference.flags & Placement;
   };
 
-  const NewFiber = Symbol('NewFiber');
-  const ReuseFiber = Symbol('ReuseFiber');
-  const RetainFiber = Symbol('RetainFiber');
+  const NewFiber = Symbol("NewFiber");
+  const ReuseFiber = Symbol("ReuseFiber");
+  const RetainFiber = Symbol("RetainFiber");
 
-  const HostText = Symbol('HostText');
-  const HostComponent = Symbol('HostComponent');
-  const FunctionComponent = Symbol('FunctionComponent');
+  const HostText = Symbol("HostText");
+  const HostComponent = Symbol("HostComponent");
+  const FunctionComponent = Symbol("FunctionComponent");
 
-  const NoPortal = Symbol('NoPortal');
-  const IsPortal = Symbol('IsPortal');
-  const InPortal = Symbol('InPortal');
+  const NoPortal = Symbol("NoPortal");
+  const IsPortal = Symbol("IsPortal");
+  const InPortal = Symbol("InPortal");
 
-  const NoStateChange = Symbol('NoStateChange');
-  const SelfStateChange = Symbol('SelfStateChange');
-  const ReturnStateChange = Symbol('ReturnStateChange');
+  const NoStateChange = Symbol("NoStateChange");
+  const SelfStateChange = Symbol("SelfStateChange");
+  const ReturnStateChange = Symbol("ReturnStateChange");
 
   class Fiber {
     key = null;
@@ -730,7 +736,7 @@
 
     get normalChildren() {
       if (this.tagType === HostText) {
-        return [];
+        return null;
       }
 
       let tempChildren =
@@ -739,7 +745,7 @@
           : genComponentInnerElement(this);
 
       if (tempChildren === void 0) {
-        return [];
+        return null;
       } else {
         return isArray(tempChildren)
           ? tempChildren.map(toElement)
@@ -758,7 +764,9 @@
       if (this.type === "text") {
         this.tagType = HostText;
         this.memoizedProps = this.pendingProps;
-        this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
+        this.stateNode = hostConfig.createTextInstance(
+          this.pendingProps.content
+        );
       } else if (isString(this.type)) {
         this.tagType = HostComponent;
         this.stateNode = hostConfig.createInstance(this.type);
@@ -797,7 +805,7 @@
   Fiber.RerenderSet = new Set();
   Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
 
-  Fiber.clean = (fiber) => {
+  Fiber.clean = (fiber, isCommit) => {
     fiber.reuseFlag = RetainFiber;
     fiber.flags = NoFlags;
     fiber.__refer = null;
@@ -915,39 +923,41 @@
     }
     returnFiber.child = null;
 
-    let preFiber = null;
-    let preOldIndex = -1;
-    for (let index = 0; index < children.length; index++) {
-      const element = children[index];
-      const key =
-        (isString(element.type) ? element.type : element.type.name) +
-        "#" +
-        (element.key != null ? element.key : index);
-      const fiber = createFiber(element, key, returnFiber.nodeKey);
-      fiber.index = index;
-      fiber.return = returnFiber;
-      deletionSet.delete(fiber);
+    if (children !== null) {
+      let preFiber = null;
+      let preOldIndex = -1;
+      for (let index = 0; index < children.length; index++) {
+        const element = children[index];
+        const key =
+          (isString(element.type) ? element.type : element.type.name) +
+          "#" +
+          (element.key != null ? element.key : index);
+        const fiber = createFiber(element, key, returnFiber.nodeKey);
+        fiber.index = index;
+        fiber.return = returnFiber;
+        deletionSet.delete(fiber);
 
-      if (
-        fiber.oldIndex === -1 ||
-        fiber.oldIndex <= preOldIndex ||
-        fiber.memoizedProps.__target !== fiber.pendingProps.__target
-      ) {
-        markPlacement(fiber);
-      } else {
-        preOldIndex = fiber.oldIndex;
+        if (
+          fiber.oldIndex === -1 ||
+          fiber.oldIndex <= preOldIndex ||
+          fiber.memoizedProps.__target !== fiber.pendingProps.__target
+        ) {
+          markPlacement(fiber);
+        } else {
+          preOldIndex = fiber.oldIndex;
+        }
+
+        fiber.portalFlag = fiber.pendingProps.__target ? IsPortal : NoPortal;
+
+        if (index === 0) {
+          returnFiber.child = fiber;
+        } else {
+          preFiber.sibling = fiber;
+        }
+
+        fiber.oldIndex = fiber.index;
+        preFiber = fiber;
       }
-
-      fiber.portalFlag = fiber.pendingProps.__target ? IsPortal : NoPortal;
-
-      if (index === 0) {
-        returnFiber.child = fiber;
-      } else {
-        preFiber.sibling = fiber;
-      }
-
-      fiber.oldIndex = fiber.index;
-      preFiber = fiber;
     }
 
     if (deletionSet.size) {
@@ -996,11 +1006,16 @@
         }
       } else if (fiber.tagType === HostComponent) {
         const attrs = [];
-        const newKeySet = new Set();
+        const SkipSymbol = Symbol("skip");
+
         for (const pKey in newProps) {
           const pValue = newProps[pKey];
-          const oldPValue = oldProps[pKey];
-          newKeySet.add(pKey);
+          let oldPValue = void 0;
+
+          if (pKey in oldProps) {
+            oldPValue = oldProps[pKey];
+            oldProps[pKey] = SkipSymbol;
+          }
 
           if (
             pKey === "children" ||
@@ -1030,7 +1045,7 @@
             pKey === "children" ||
             pKey === "ref" ||
             pKey[0] === "_" ||
-            newKeySet.has(pKey)
+            oldProps[pKey] === SkipSymbol
           ) {
             continue;
           }
@@ -1076,7 +1091,10 @@
         inheritPlacement(fiber, returnFiber);
       }
 
-      if (returnFiber.portalFlag !== NoPortal && fiber.portalFlag === NoPortal) {
+      if (
+        returnFiber.portalFlag !== NoPortal &&
+        fiber.portalFlag === NoPortal
+      ) {
         fiber.portalFlag = InPortal;
       }
 
@@ -1194,12 +1212,13 @@
         fiber.flags &= ~MarkRef;
       }
 
-      Fiber.clean(fiber);
+      Fiber.clean(fiber, true);
     }
   };
 
-  const markPreHostRefer = (leafChild, preHostFiber) => {
+  const markPreHostRefer = (leafChild) => {
     let current = leafChild;
+    const preHostFiber = leafChild.__refer;
     while (
       current.return &&
       !current.return.__refer &&
@@ -1207,6 +1226,9 @@
     ) {
       current.return.__refer = preHostFiber;
       current = current.return;
+      if (current.portalFlag === IsPortal) {
+        return;
+      }
     }
   };
 
@@ -1233,19 +1255,30 @@
 
       finishedWork(fiber);
 
+      const portalParent =
+        fiber.portalFlag === InPortal
+          ? findParentFiber(fiber, (f) => f.portalFlag === IsPortal)
+          : null;
+
       if (isLeaf) {
-        fiber.__refer = scheduler.preHostFiber;
-        markPreHostRefer(fiber, scheduler.preHostFiber);
+        fiber.__refer = !portalParent
+          ? scheduler.preHostFiber
+          : portalParent.__preHostFiber;
+        markPreHostRefer(fiber);
       }
 
       if (fiber.flags !== NoFlags) {
         scheduler.MutationQueue.push(fiber);
       } else {
-        Fiber.clean(fiber);
+        Fiber.clean(fiber, false);
       }
 
-      if (fiber.tagType !== FunctionComponent && fiber.portalFlag === NoPortal) {
-        scheduler.preHostFiber = fiber;
+      if (fiber.tagType !== FunctionComponent) {
+        if (!portalParent) {
+          scheduler.preHostFiber = fiber;
+        } else {
+          portalParent.__preHostFiber = fiber;
+        }
       }
 
       if (deadline.didTimeout) {

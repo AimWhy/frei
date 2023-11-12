@@ -83,7 +83,10 @@ function App(props) {
       </button>
 
       <Fragment key="lkjsdflkj" __target={state ? document.body : void 0}>
-        <div>倪玲玲是个</div>
+        <div>
+          <div>小羽毛是个</div>
+          <div>机灵鬼</div>
+        </div>
       </Fragment>
 
       <Fragment key="88">
@@ -96,7 +99,10 @@ function App(props) {
 
       {!state ? (
         <Fragment key="77" __target={document.body}>
-          <div>Portal-999999999999999</div>
+          <div>
+            <div>Portal-999999999999999</div>
+            <div>Portal-666666666666666</div>
+          </div>
         </Fragment>
       ) : (
         "Portal inner"
