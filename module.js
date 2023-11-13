@@ -124,7 +124,7 @@ const mainQueueMacrotask = genQueueMacrotask("main-macro-task");
 
 const effectQueueMacrotask = genQueueMacrotask("effect-macro-task");
 
-const elementPropsKey = "__props";
+const elementPropsKey = "__fiber";
 
 /* #region 事件相关 */
 
@@ -151,7 +151,7 @@ const collectPaths = (targetElement, container, eventType) => {
 
   while (targetElement && targetElement !== container) {
     const callbackNameList = eventTypeMap[eventType];
-    const elementProps = targetElement[elementPropsKey];
+    const elementProps = targetElement[elementPropsKey] ? targetElement[elementPropsKey].memoizedProps : null;
 
     if (elementProps && callbackNameList) {
       const [captureName, bubbleName] = callbackNameList;
@@ -241,38 +241,21 @@ const onCompositionEnd = (e) => {
 };
 const onInputFixed = (e) => {
   if (!e.target.composing) {
-    e.target[elementPropsKey]["onInput"](e);
+    const elementProps = e.target[elementPropsKey].memoizedProps;
+    elementProps["onInput"](e);
   }
 };
 const eventCallback = (e) => {
   const pKey = "on" + e.type[0].toUpperCase() + e.type.slice(1);
-  if (e.target[elementPropsKey][pKey]) {
-    e.target[elementPropsKey][pKey](e);
+  const elementProps = e.target[elementPropsKey] ? e.target[elementPropsKey].memoizedProps : null;
+  if (elementProps && elementProps[pKey]) {
+    elementProps[pKey](e);
   }
 };
 
-const listDelimiterRE = /;(?![^(]*\))/g;
-const propertyDelimiterRE = /:([^]+)/;
-const styleCommentRE = /\/\*[^]*?\*\//g;
-const parseStringStyle = (cssText) => {
-  return cssText
-    .replace(styleCommentRE, "")
-    .split(listDelimiterRE)
-    .reduce((acc, item) => {
-      if (item) {
-        const tmp = item.split(propertyDelimiterRE);
-        if (tmp.length > 1) {
-          acc[tmp[0].trim()] = tmp[1].trim();
-        }
-      }
-      return acc;
-    }, {});
-};
-
-const camelizeRE = /-(\w)/g;
 const camelizePlacer = (_, c) => (c ? c.toUpperCase() : "");
 const camelize = (str) => {
-  return str.replace(camelizeRE, camelizePlacer);
+  return str.replace(/-(\w)/g, camelizePlacer);
 };
 
 const setStyle = (style, name, val) => {
@@ -318,9 +301,8 @@ const domHostConfig = {
     container.insertBefore(child, reference.nextSibling);
   },
   removeChild(child) {
-    if (child.isConnected) {
-      child.parentNode.removeChild(child);
-    }
+    child.parentNode.removeChild(child);
+    child[elementPropsKey] = null;
   },
   commitTextUpdate(node, content) {
     node.nodeValue = content;
@@ -338,9 +320,6 @@ const domHostConfig = {
           node.removeAttribute(attrName);
         } else {
           switch (attrName) {
-            case "class":
-              node.className = pValue;
-              break;
             case "style":
               const styleValue = pValue;
               if (isString(styleValue)) {
@@ -372,8 +351,8 @@ const domHostConfig = {
       node[method](eventName, eventCallback);
     }
   },
-  updateInstanceProps(node, props) {
-    node[elementPropsKey] = props;
+  updateInstanceProps(node, fiber) {
+    node[elementPropsKey] = fiber;
   },
   genRestoreDataFn() {
     const focusedElement = document.activeElement;
@@ -643,7 +622,6 @@ class Fiber {
   ref = null;
   type = null;
   tagType = null;
-  pNodeKey = "";
   nodeKey = "";
   pendingProps = {};
   memoizedProps = {};
@@ -687,9 +665,8 @@ class Fiber {
     }
   }
 
-  constructor(element, key, pNodeKey, nodeKey) {
+  constructor(element, key, nodeKey) {
     this.key = key;
-    this.pNodeKey = pNodeKey;
     this.nodeKey = nodeKey;
     this.type = element.type;
     this.pendingProps = element.props;
@@ -702,10 +679,14 @@ class Fiber {
     } else if (isString(this.type)) {
       this.tagType = HostComponent;
       this.stateNode = hostConfig.createInstance(this.type);
+      hostConfig.updateInstanceProps(this.stateNode, this);
+
       this.childFiberMap = new Map();
+      this.deletionKeySet = new Set();
     } else {
       this.tagType = FunctionComponent;
       this.childFiberMap = new Map();
+      this.deletionKeySet = new Set();
     }
   }
 
@@ -740,11 +721,6 @@ Fiber.clean = (fiber, isCommit) => {
   fiber.portalFlag = NoPortal;
   fiber.reuseFlag = RetainFiber;
   fiber.stateFlag = NoStateChange;
-
-  // 事件变动了，没有记录flag, 需要更新存储
-  if (fiber.tagType === HostComponent) {
-    hostConfig.updateInstanceProps(fiber.stateNode, fiber.memoizedProps);
-  }
 };
 Fiber.initLifecycle = (fiber) => {
   fiber.onMounted = new Set();
@@ -815,7 +791,7 @@ const createFiber = (element, key, returnFiber) => {
   const nodeKey = Fiber.genNodeKey(key, pNodeKey);
 
   if (!returnFiber) {
-    return new Fiber(element, key, pNodeKey, nodeKey);
+    return new Fiber(element, key, nodeKey);
   }
 
   let fiber = returnFiber.childFiberMap.get(nodeKey);
@@ -826,7 +802,7 @@ const createFiber = (element, key, returnFiber) => {
     fiber.sibling = null;
     fiber.return = null;
   } else {
-    fiber = new Fiber(element, key, pNodeKey, nodeKey);
+    fiber = new Fiber(element, key, nodeKey);
     returnFiber.childFiberMap.set(nodeKey, fiber);
   }
 
@@ -853,8 +829,10 @@ const beginWork = (returnFiber) => {
   }
 
   const children = returnFiber.normalChildren;
-  
-  const deletionKeySet = new Set(returnFiber.childFiberMap.keys());
+
+  for (const oldNodeKey of returnFiber.childFiberMap.keys()) {
+    returnFiber.deletionKeySet.add(oldNodeKey);
+  }
 
   returnFiber.child = null;
 
@@ -870,7 +848,7 @@ const beginWork = (returnFiber) => {
       const fiber = createFiber(element, key, returnFiber);
       fiber.index = index;
       fiber.return = returnFiber;
-      deletionKeySet.delete(fiber.nodeKey);
+      returnFiber.deletionKeySet.delete(fiber.nodeKey);
 
       if (
         fiber.oldIndex === -1 ||
@@ -893,8 +871,7 @@ const beginWork = (returnFiber) => {
     }
   }
 
-  if (deletionKeySet.size) {
-    returnFiber.deletionKeySet = deletionKeySet;
+  if (returnFiber.deletionKeySet.size) {
     markChildDeletion(returnFiber);
   }
 };
