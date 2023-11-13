@@ -316,7 +316,7 @@ const domHostConfig = {
       if (hostSpecialAttrSet.has(pKey)) {
         domHostConfig.fixHostSpecial(node, pKey, pValue);
       } else {
-        const attrName = hostConfig.fixAttrName(pKey);
+        const attrName = domHostConfig.fixAttrName(pKey);
         if (pValue === void 0) {
           node.removeAttribute(attrName);
         } else {
