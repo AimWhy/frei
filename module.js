@@ -251,27 +251,6 @@ const eventCallback = (e) => {
   }
 };
 
-const normalizeClass = (value) => {
-  let res = "";
-  if (isString(value)) {
-    res = value;
-  } else if (isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const normalized = normalizeClass(value[i]);
-      if (normalized) {
-        res += normalized + " ";
-      }
-    }
-  } else if (isObject(value)) {
-    for (const name in value) {
-      if (value[name]) {
-        res += name + " ";
-      }
-    }
-  }
-  return res;
-};
-
 const listDelimiterRE = /;(?![^(]*\))/g;
 const propertyDelimiterRE = /:([^]+)/;
 const styleCommentRE = /\/\*[^]*?\*\//g;
@@ -288,29 +267,6 @@ const parseStringStyle = (cssText) => {
       }
       return acc;
     }, {});
-};
-
-const normalizeStyle = (value) => {
-  if (isArray(value)) {
-    const res = {};
-    for (let i = 0; i < value.length; i++) {
-      const item = value[i];
-      const normalized = isString(item)
-        ? parseStringStyle(item)
-        : normalizeStyle(item);
-
-      if (normalized) {
-        for (const key in normalized) {
-          res[key] = normalized[key];
-        }
-      }
-    }
-    return res;
-  } else if (isString(value)) {
-    return value;
-  } else if (isObject(value)) {
-    return value;
-  }
 };
 
 const camelizeRE = /-(\w)/g;
@@ -383,10 +339,10 @@ const domHostConfig = {
         } else {
           switch (attrName) {
             case "class":
-              node.className = normalizeClass(pValue);
+              node.className = pValue;
               break;
             case "style":
-              const styleValue = normalizeStyle(pValue);
+              const styleValue = pValue;
               if (isString(styleValue)) {
                 node.style.cssText = styleValue;
               } else {
@@ -704,7 +660,8 @@ class Fiber {
   child = null;
   return = null;
   sibling = null;
-  deletionSet = null;
+  childFiberMap = null;
+  deletionKeySet = null;
 
   flags = NoFlags;
   reuseFlag = NewFiber;
@@ -745,13 +702,15 @@ class Fiber {
     } else if (isString(this.type)) {
       this.tagType = HostComponent;
       this.stateNode = hostConfig.createInstance(this.type);
+      this.childFiberMap = new Map();
     } else {
       this.tagType = FunctionComponent;
+      this.childFiberMap = new Map();
     }
   }
 
   rerender() {
-    if (Fiber.scheduler || !Fiber.ExistPool.has(this.nodeKey)) {
+    if (Fiber.scheduler) {
       return;
     }
 
@@ -772,7 +731,6 @@ class Fiber {
   }
 }
 
-Fiber.ExistPool = new Map();
 Fiber.RerenderSet = new Set();
 Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
 
@@ -852,9 +810,15 @@ function* walkFiberTree(returnFiber) {
   yield returnFiber;
 }
 
-const createFiber = (element, key, pNodeKey = "") => {
+const createFiber = (element, key, returnFiber) => {
+  const pNodeKey = returnFiber ? returnFiber.nodeKey : "";
   const nodeKey = Fiber.genNodeKey(key, pNodeKey);
-  let fiber = Fiber.ExistPool.get(nodeKey);
+
+  if (!returnFiber) {
+    return new Fiber(element, key, pNodeKey, nodeKey);
+  }
+
+  let fiber = returnFiber.childFiberMap.get(nodeKey);
 
   if (fiber) {
     fiber.pendingProps = element.props;
@@ -863,7 +827,7 @@ const createFiber = (element, key, pNodeKey = "") => {
     fiber.return = null;
   } else {
     fiber = new Fiber(element, key, pNodeKey, nodeKey);
-    Fiber.ExistPool.set(nodeKey, fiber);
+    returnFiber.childFiberMap.set(nodeKey, fiber);
   }
 
   return fiber;
@@ -889,12 +853,9 @@ const beginWork = (returnFiber) => {
   }
 
   const children = returnFiber.normalChildren;
+  
+  const deletionKeySet = new Set(returnFiber.childFiberMap.keys());
 
-  // child 还保留着旧子fiber的引用，用来收集 deletionSet
-  const deletionSet = returnFiber.deletionSet || new Set();
-  for (const child of walkChildFiber(returnFiber)) {
-    deletionSet.add(child);
-  }
   returnFiber.child = null;
 
   if (children !== null) {
@@ -906,10 +867,10 @@ const beginWork = (returnFiber) => {
         (isString(element.type) ? element.type : element.type.name) +
         "#" +
         (element.key != null ? element.key : index);
-      const fiber = createFiber(element, key, returnFiber.nodeKey);
+      const fiber = createFiber(element, key, returnFiber);
       fiber.index = index;
       fiber.return = returnFiber;
-      deletionSet.delete(fiber);
+      deletionKeySet.delete(fiber.nodeKey);
 
       if (
         fiber.oldIndex === -1 ||
@@ -932,8 +893,8 @@ const beginWork = (returnFiber) => {
     }
   }
 
-  if (deletionSet.size) {
-    returnFiber.deletionSet = deletionSet;
+  if (deletionKeySet.size) {
+    returnFiber.deletionKeySet = deletionKeySet;
     markChildDeletion(returnFiber);
   }
 };
@@ -1126,7 +1087,10 @@ const updateHostFiber = (fiber) => {
 };
 
 const childDeletionFiber = (returnFiber) => {
-  for (const fiber of returnFiber.deletionSet) {
+  for (const nodeKey of returnFiber.deletionKeySet) {
+    const fiber = returnFiber.childFiberMap.get(nodeKey);
+    returnFiber.childFiberMap.delete(nodeKey);
+
     for (const f of walkFiberTree(fiber)) {
       if (f.tagType !== FunctionComponent) {
         hostConfig.removeChild(f.stateNode);
@@ -1135,10 +1099,9 @@ const childDeletionFiber = (returnFiber) => {
       }
 
       f.ref && f.ref(null);
-      Fiber.ExistPool.delete(f.nodeKey);
     }
   }
-  returnFiber.deletionSet.clear();
+  returnFiber.deletionKeySet.clear();
 };
 
 const commitRoot = () => {
@@ -1275,7 +1238,7 @@ export const createRoot = (container) => {
           type: container.tagName.toLowerCase(),
           props: { children: element },
         },
-        key
+        key,
       );
 
       rootFiber.stateNode = container;
