@@ -101,20 +101,19 @@ const listReducer = (state, action) => {
     case "CLEAR":
       return { data: [], selected: 0 };
     case "SWAP_ROWS":
-      return data.length > 998
+      return data.length > 999
         ? {
             data: [
               data[0],
               data[998],
               ...data.slice(2, 998),
               data[1],
-              data[999],
+              ...data.slice(999),
             ],
             selected,
           }
         : state;
     case "REMOVE": {
-
       return {
         data: data.filter(item => item.id !== action.id),
         selected,

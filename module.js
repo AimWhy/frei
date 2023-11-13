@@ -82,6 +82,7 @@ const genQueueMacrotask = (macrotaskName) => {
     const timeoutTime = startTime + frameYieldMs;
     const deadline = {
       get didTimeout() {
+        // return false
         return Date.now() > timeoutTime;
       },
     };
@@ -1082,6 +1083,7 @@ const childDeletionFiber = (returnFiber) => {
 };
 
 const commitRoot = () => {
+  console.log('Fiber.scheduler.MutationQueue: ' + Fiber.scheduler.MutationQueue.length)
   for (const fiber of Fiber.scheduler.MutationQueue) {
     const isHostFiber = fiber.tagType !== FunctionComponent;
 
