@@ -49,16 +49,14 @@ export const objectEqual = (object1, object2, isDeep) => {
   return true;
 };
 
-const SpecialBooleanAttr = new Set([
-  "itemscope",
-  "allowfullscreen",
-  "formnovalidate",
-  "ismap",
-  "nomodule",
-  "novalidate",
-  "readonly",
-]);
-const isSpecialBooleanAttr = (val) => SpecialBooleanAttr.has(val);
+const isSpecialBooleanAttr = (val) =>
+  val === "allowfullscreen" ||
+  val === "formnovalidate" ||
+  val === "novalidate" ||
+  val === "itemscope" ||
+  val === "nomodule" ||
+  val === "readonly" ||
+  val === "ismap";
 
 const includeBooleanAttr = (value) => !!value || value === "";
 
@@ -176,6 +174,7 @@ const createSyntheticEvent = (e) => {
       originStopPropagation();
     }
   };
+
   return syntheticEvent;
 };
 
@@ -805,8 +804,7 @@ const findParentFiber = (fiber, checker) => {
 
 const beginWork = (returnFiber) => {
   if (
-    !(returnFiber.stateFlag & SelfStateInitial) &&
-    !(returnFiber.stateFlag & SelfStateChange) &&
+    !(returnFiber.stateFlag & (SelfStateInitial | SelfStateChange)) &&
     objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
   ) {
     return;
@@ -865,13 +863,14 @@ const finishedWork = (fiber) => {
   } else {
     const oldProps = fiber.memoizedProps || {};
     const newProps = fiber.pendingProps || {};
-    let isChange = false;
+
+    let isMarkUpdate = fiber.stateFlag & SelfStateChange;
 
     if (oldProps.ref !== newProps.ref) {
       const oldRef = oldProps.ref;
       const newRef = newProps.ref;
 
-      isChange = true;
+      isMarkUpdate |= 1;
 
       fiber.ref = (instance) => {
         if (isFunction(oldRef)) {
@@ -890,14 +889,10 @@ const finishedWork = (fiber) => {
       markRef(fiber);
     }
 
-    if (fiber.stateFlag & SelfStateChange) {
-      markUpdate(fiber);
-    }
-
     if (fiber.tagType === HostText) {
       if (!oldProps || newProps.content !== oldProps.content) {
         fiber.memoizedState = newProps.content;
-        markUpdate(fiber);
+        isMarkUpdate |= 1;
       }
     } else if (fiber.tagType === HostComponent) {
       const attrs = [];
@@ -956,17 +951,20 @@ const finishedWork = (fiber) => {
 
       fiber.memoizedState = attrs;
       if (fiber.memoizedState.length) {
-        markUpdate(fiber);
+        isMarkUpdate |= 1;
       }
     } else {
       if (
-        isChange ||
-        (!(fiber.stateFlag & SelfStateInitial) &&
-          !(fiber.stateFlag & SelfStateChange) &&
-          !objectEqual(fiber.memoizedProps, fiber.pendingProps))
+        !isMarkUpdate &&
+        !(fiber.stateFlag & SelfStateInitial) &&
+        !objectEqual(fiber.memoizedProps, fiber.pendingProps)
       ) {
-        markUpdate(fiber);
+        isMarkUpdate |= 1;
       }
+    }
+
+    if (isMarkUpdate) {
+      markUpdate(fiber);
     }
     fiber.memoizedProps = fiber.pendingProps;
   }
@@ -999,6 +997,8 @@ function* genFiberTree(returnFiber) {
 
     if (fiber.tagType === HostText) {
       yield [fiber, true];
+      // } else if (!fiber.stateFlag) {
+      //   yield [fiber, !fiber.child];
     } else {
       yield* genFiberTree(fiber);
     }
