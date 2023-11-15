@@ -784,6 +784,7 @@ const createFiber = (element, key, pNodeKey, deletionMap) => {
     fiber.pendingProps = element.props;
     fiber.sibling = null;
     fiber.return = null;
+    fiber.stateFlag |= ReturnStateChange;
     deletionMap.delete(nodeKey);
   } else {
     fiber = new Fiber(element, key, nodeKey);
@@ -858,7 +859,6 @@ const beginWork = (returnFiber) => {
   }
 };
 
-const SkipSymbol = Symbol("skip");
 const finishedWork = (fiber) => {
   if (!fiber.stateFlag) {
     fiber.memoizedProps = fiber.pendingProps;
@@ -901,6 +901,7 @@ const finishedWork = (fiber) => {
       }
     } else if (fiber.tagType === HostComponent) {
       const attrs = [];
+      const skip = Object.create(null);
 
       for (const pKey in newProps) {
         const pValue = newProps[pKey];
@@ -908,7 +909,7 @@ const finishedWork = (fiber) => {
 
         if (pKey in oldProps) {
           oldPValue = oldProps[pKey];
-          oldProps[pKey] = SkipSymbol;
+          skip[pKey] = true;
         }
 
         if (
@@ -939,7 +940,7 @@ const finishedWork = (fiber) => {
           pKey === "children" ||
           pKey === "ref" ||
           pKey[0] === "_" ||
-          oldProps[pKey] === SkipSymbol
+          skip[pKey]
         ) {
           continue;
         }
@@ -992,9 +993,9 @@ function* genFiberTree(returnFiber) {
       fiber.portalFlag |= ReturnPortal;
     }
 
-    // if (returnFiber.stateFlag) {
-    //   fiber.stateFlag |= ReturnStateChange;
-    // }
+    if (returnFiber.stateFlag) {
+      fiber.stateFlag |= ReturnStateChange;
+    }
 
     if (fiber.tagType === HostText) {
       yield [fiber, true];
