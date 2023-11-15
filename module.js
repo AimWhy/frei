@@ -594,10 +594,6 @@ const markChildDeletion = (fiber) => {
   fiber.flags |= ChildDeletion;
 };
 
-const NewFiber = Symbol("NewFiber");
-const ReuseFiber = Symbol("ReuseFiber");
-const RetainFiber = Symbol("RetainFiber");
-
 const HostText = Symbol("HostText");
 const HostComponent = Symbol("HostComponent");
 const FunctionComponent = Symbol("FunctionComponent");
@@ -607,8 +603,10 @@ const SelfPortal = 0b0000001;
 const ReturnPortal = 0b0000010;
 
 const NoStateChange = 0b0000000;
-const SelfStateChange = 0b0000001;
-const ReturnStateChange = 0b0000010;
+const SelfStateInitial = 0b0000001;
+const SelfStateChange = 0b0000010;
+const ChildStateChange = 0b0000100;
+const ReturnStateChange = 0b0001000;
 
 class Fiber {
   key = null;
@@ -633,9 +631,8 @@ class Fiber {
   sibling = null;
 
   flags = NoFlags;
-  reuseFlag = NewFiber;
   portalFlag = NoPortal;
-  stateFlag = NoStateChange;
+  stateFlag = SelfStateInitial;
 
   get normalChildren() {
     if (this.tagType === HostText) {
@@ -704,7 +701,6 @@ Fiber.clean = (fiber, isCommit) => {
   fiber.__refer = null;
   fiber.flags = NoFlags;
   fiber.portalFlag = NoPortal;
-  fiber.reuseFlag = RetainFiber;
   fiber.stateFlag = NoStateChange;
 };
 Fiber.initLifecycle = (fiber) => {
@@ -725,27 +721,36 @@ const isDescendantOf = (fiber, returnFiber) =>
 const batchRerender = () => {
   const mapFiberCount = new Map();
   let commonReturnHost = null;
+  let fiber = null;
 
   label: for (const current of Fiber.RerenderSet) {
     current.updateQueue.forEach((fn) => fn());
     current.updateQueue.length = 0;
     current.stateFlag = SelfStateChange;
-    let fiber = current;
 
+    fiber = current;
     while (fiber) {
+      fiber.stateFlag |= ChildStateChange;
+
       if (isContainerFiber(fiber)) {
         const preCount = mapFiberCount.get(fiber) || 0;
-        const curCount = preCount + 1;
 
-        if (curCount >= Fiber.RerenderSet.size) {
+        if (preCount + 1 >= Fiber.RerenderSet.size) {
           commonReturnHost = fiber;
           break label;
         } else {
-          mapFiberCount.set(fiber, curCount);
+          mapFiberCount.set(fiber, preCount + 1);
         }
       }
+
       fiber = fiber.return;
     }
+  }
+
+  fiber = commonReturnHost.return;
+  while (fiber) {
+    fiber.stateFlag &= ~ChildStateChange;
+    fiber = fiber.return;
   }
 
   Fiber.RerenderSet.clear();
@@ -777,7 +782,6 @@ const createFiber = (element, key, pNodeKey, deletionMap) => {
 
   if (fiber) {
     fiber.pendingProps = element.props;
-    fiber.reuseFlag = ReuseFiber;
     fiber.sibling = null;
     fiber.return = null;
     deletionMap.delete(nodeKey);
@@ -800,7 +804,7 @@ const findParentFiber = (fiber, checker) => {
 
 const beginWork = (returnFiber) => {
   if (
-    returnFiber.reuseFlag !== NewFiber &&
+    !(returnFiber.stateFlag & SelfStateInitial) &&
     !(returnFiber.stateFlag & SelfStateChange) &&
     objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
   ) {
@@ -856,7 +860,7 @@ const beginWork = (returnFiber) => {
 
 const SkipSymbol = Symbol("skip");
 const finishedWork = (fiber) => {
-  if (fiber.reuseFlag === RetainFiber || !fiber.stateFlag) {
+  if (!fiber.stateFlag) {
     fiber.memoizedProps = fiber.pendingProps;
   } else {
     const oldProps = fiber.memoizedProps || {};
@@ -956,7 +960,8 @@ const finishedWork = (fiber) => {
     } else {
       if (
         isChange ||
-        (fiber.reuseFlag !== NewFiber &&
+        (!(fiber.stateFlag & SelfStateInitial) &&
+          !(fiber.stateFlag & SelfStateChange) &&
           !objectEqual(fiber.memoizedProps, fiber.pendingProps))
       ) {
         markUpdate(fiber);
@@ -987,9 +992,9 @@ function* genFiberTree(returnFiber) {
       fiber.portalFlag |= ReturnPortal;
     }
 
-    if (returnFiber.stateFlag) {
-      fiber.stateFlag |= ReturnStateChange;
-    }
+    // if (returnFiber.stateFlag) {
+    //   fiber.stateFlag |= ReturnStateChange;
+    // }
 
     if (fiber.tagType === HostText) {
       yield [fiber, true];
@@ -1078,7 +1083,7 @@ const commitRoot = () => {
       if (isHostFiber) {
         placementFiber(fiber);
       } else {
-        if (fiber.reuseFlag !== NewFiber) {
+        if (!(fiber.stateFlag & SelfStateInitial)) {
           dispatchHook(fiber, "onBeforeMove");
           dispatchHook(fiber, "onMoved", true);
         } else {
@@ -1190,7 +1195,6 @@ export const createRoot = (container) => {
 
       rootFiber.stateNode = container;
       rootFiber.stateNode.__rootFiber = rootFiber;
-      rootFiber.stateFlag = SelfStateChange;
       rootFiber.rerender();
     },
   };
