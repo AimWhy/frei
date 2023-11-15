@@ -778,7 +778,7 @@ function* walkFiberTree(returnFiber) {
 
 const createFiber = (element, key, pNodeKey, deletionMap) => {
   const nodeKey = Fiber.genNodeKey(key, pNodeKey);
-  let fiber = deletionMap.get(nodeKey);
+  let fiber = deletionMap.size ? deletionMap.get(nodeKey) : null;
 
   if (fiber) {
     fiber.pendingProps = element.props;
@@ -993,9 +993,9 @@ function* genFiberTree(returnFiber) {
       fiber.portalFlag |= ReturnPortal;
     }
 
-    if (returnFiber.stateFlag) {
-      fiber.stateFlag |= ReturnStateChange;
-    }
+    // if (returnFiber.stateFlag) {
+    //   fiber.stateFlag |= ReturnStateChange;
+    // }
 
     if (fiber.tagType === HostText) {
       yield [fiber, true];
