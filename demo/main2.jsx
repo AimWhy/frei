@@ -4,6 +4,7 @@ import {
   useEffect,
   useContext,
   createContext,
+  Fragment,
 } from "../module";
 
 const NameContext = createContext("theme");
@@ -37,6 +38,12 @@ function World(props) {
   return <div>{name}</div>;
 }
 
+function Test() {
+  const [name, setName] = useState("test");
+  window.setName = setName;
+  return name;
+}
+
 function App() {
   const [name, setName] = useState("nll");
 
@@ -47,11 +54,17 @@ function App() {
   });
 
   return (
-    <NameContext.Provider value={name}>
-      <button onClick={() => setName((a) => a + 1)}>换名字</button>
-      <div>{name}</div>
-      <Hello school="school"></Hello>
-    </NameContext.Provider>
+    <div>
+      <NameContext.Provider value={name}>
+        <button onClick={() => setName((a) => a + 1)}>换名字</button>
+        <div>{name}</div>
+        <Hello school="school"></Hello>
+      </NameContext.Provider>
+
+      <Fragment key="799" __target={document.body}>
+        <Test />
+      </Fragment>
+    </div>
   );
 }
 

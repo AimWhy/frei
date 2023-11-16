@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => { };
+const noop = () => {};
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -17,10 +17,10 @@ export const objectEqual = (object1, object2, isDeep) => {
   }
 
   if (
-    typeof object1 !== "object" ||
-    typeof object2 !== "object" ||
     object1 === null ||
-    object2 === null
+    object2 === null ||
+    typeof object1 !== "object" ||
+    typeof object2 !== "object"
   ) {
     return false;
   }
@@ -59,7 +59,7 @@ const isSpecialBooleanAttr = (val) =>
   val === "readonly" ||
   val === "ismap";
 
-const includeBooleanAttr = (value) => !!value || value === "";
+const includeBooleanAttr = (value) => value === "" || !!value;
 
 const genQueueMacrotask = (macrotaskName) => {
   const frameYieldMs = 10;
@@ -79,14 +79,17 @@ const genQueueMacrotask = (macrotaskName) => {
 
     try {
       while (scheduledQueue.length > 0 && !didTimeout()) {
-        const work = scheduledQueue.pop();
+        const work = scheduledQueue[scheduledQueue.length - 1];
         const next = work();
+
         if (isFunction(next)) {
-          scheduledQueue.push(next);
+          scheduledQueue[scheduledQueue.length - 1] = next;
+        } else {
+          scheduledQueue.length -= 1;
         }
       }
     } finally {
-      if (scheduledQueue.length) {
+      if (scheduledQueue.length > 0) {
         schedulePerform();
       } else {
         isLoopRunning = false;
@@ -273,7 +276,7 @@ const domHostConfig = {
     htmlFor: "for",
   },
   fixAttrName(key) {
-    return this.attrMap[key] || key;
+    return domHostConfig.attrMap[key] || key;
   },
   createInstance(type) {
     return document.createElement(type);
@@ -309,23 +312,21 @@ const domHostConfig = {
         domHostConfig.fixHostSpecial(node, pKey, pValue);
       } else {
         const attrName = domHostConfig.fixAttrName(pKey);
+
         if (pValue === void 0) {
           node.removeAttribute(attrName);
-        } else {
-          switch (attrName) {
-            case "style":
-              const styleValue = pValue;
-              if (isString(styleValue)) {
-                node.style.cssText = styleValue;
-              } else {
-                for (const key in styleValue) {
-                  setStyle(node.style, key, styleValue[key]);
-                }
-              }
-              break;
-            default:
-              node.setAttribute(attrName, pValue);
+        } else if (attrName === "style") {
+          const styleValue = pValue;
+
+          if (isString(styleValue)) {
+            node.style.cssText = styleValue;
+          } else {
+            for (const key in styleValue) {
+              setStyle(node.style, key, styleValue[key]);
+            }
           }
+        } else {
+          node.setAttribute(attrName, pValue);
         }
       }
     }
@@ -447,7 +448,7 @@ export const createContext = (initialState) => {
         findParentFiber(f, (item) => {
           item.stateFlag |= ChildStateChange;
           return item === fiber;
-        })
+        });
       });
       fiber.memoizedState.clear();
 
@@ -574,11 +575,11 @@ const toElement = (item) => {
   }
 };
 
-const NoFlags = 0b0000000;
-const Placement = 0b0000001;
-const Update = 0b0000010;
-const ChildDeletion = 0b0000100;
-const MarkRef = 0b001000;
+const NoFlags = 0 << 0;
+const Placement = 1 << 0;
+const ChildDeletion = 1 << 1;
+const Update = 1 << 2;
+const MarkRef = 1 << 3;
 
 const markUpdate = (fiber) => {
   fiber.flags |= Update;
@@ -597,15 +598,15 @@ const HostText = Symbol("HostText");
 const HostComponent = Symbol("HostComponent");
 const FunctionComponent = Symbol("FunctionComponent");
 
-const NoPortal = 0b0000000;
-const SelfPortal = 0b0000001;
-const ReturnPortal = 0b0000010;
+const NoPortal = 0 << 0;
+const SelfPortal = 1 << 0;
+const ReturnPortal = 1 << 1;
 
-const NoStateChange = 0b0000000;
-const SelfStateInitial = 0b0000001;
-const SelfStateChange = 0b0000010;
-const ChildStateChange = 0b0000100;
-const ReturnStateChange = 0b0001000;
+const NoStateChange = 0 << 0;
+const SelfStateInitial = 1 << 0;
+const SelfStateChange = 1 << 1;
+const ChildStateChange = 1 << 2;
+const ReturnStateChange = 1 << 3;
 
 class Fiber {
   key = null;
@@ -629,7 +630,7 @@ class Fiber {
   return = null;
   sibling = null;
 
-  flags = NoFlags;
+  flags = Placement;
   portalFlag = NoPortal;
   stateFlag = SelfStateInitial;
 
@@ -638,7 +639,7 @@ class Fiber {
       return null;
     }
 
-    let tempChildren =
+    const tempChildren =
       this.tagType === HostComponent
         ? this.pendingProps.children
         : genComponentInnerElement(this);
@@ -657,7 +658,6 @@ class Fiber {
     this.nodeKey = nodeKey;
     this.type = element.type;
     this.pendingProps = element.props;
-    this.flags = Placement;
 
     if (this.type === "text") {
       this.tagType = HostText;
@@ -677,7 +677,7 @@ class Fiber {
       return;
     }
 
-    if (this.tagType === FunctionComponent) {
+    if (!isContainerFiber(this)) {
       Fiber.RerenderSet.add(this);
       mainQueueMacrotask(batchRerender);
     } else {
@@ -687,7 +687,6 @@ class Fiber {
         gen: genFiberTree(this),
         restoreDataFn: hostConfig.genRestoreDataFn(),
       };
-
       mainQueueMacrotask(innerRender);
     }
   }
@@ -695,11 +694,10 @@ class Fiber {
 
 Fiber.RerenderSet = new Set();
 Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
-
 Fiber.clean = (fiber, isCommit) => {
   fiber.__refer = null;
   fiber.flags = NoFlags;
-  fiber.portalFlag = NoPortal;
+  // fiber.portalFlag = NoPortal;
   fiber.stateFlag = NoStateChange;
 };
 Fiber.initLifecycle = (fiber) => {
@@ -746,14 +744,14 @@ const batchRerender = () => {
     }
   }
 
-  fiber = commonReturnHost.return;
-  while (fiber) {
-    fiber.stateFlag &= ~ChildStateChange;
-    fiber = fiber.return;
-  }
-
   Fiber.RerenderSet.clear();
+
   if (commonReturnHost) {
+    fiber = commonReturnHost.return;
+    while (fiber) {
+      fiber.stateFlag &= ~ChildStateChange;
+      fiber = fiber.return;
+    }
     commonReturnHost.rerender();
   }
 };
@@ -769,7 +767,7 @@ function* walkChildFiber(returnFiber) {
 function* walkFiberTree(returnFiber, fn = noop) {
   let fiber = returnFiber.child;
   while (fiber) {
-    fn(fiber, returnFiber)
+    fn(fiber, returnFiber);
     yield* walkFiberTree(fiber);
     fiber = fiber.sibling;
   }
@@ -975,14 +973,14 @@ const markPortal = (fiber, returnFiber) => {
   if (returnFiber.portalFlag) {
     fiber.portalFlag |= ReturnPortal;
   }
-}
+};
 
 function* genFiberTree(returnFiber) {
   beginWork(returnFiber);
 
-  if (returnFiber.pendingProps.__target) {
-    returnFiber.portalFlag |= SelfPortal;
-  }
+  returnFiber.portalFlag = returnFiber.pendingProps.__target
+    ? SelfPortal
+    : NoPortal;
 
   let isCleanFiber = true;
   let fiber = returnFiber.child;
@@ -990,8 +988,11 @@ function* genFiberTree(returnFiber) {
   while (fiber) {
     isCleanFiber = false;
 
-    if (returnFiber.tagType === FunctionComponent && (returnFiber.flags & Placement)) {
-      markPlacement(fiber)
+    if (
+      returnFiber.tagType === FunctionComponent &&
+      returnFiber.flags & Placement
+    ) {
+      markPlacement(fiber);
     }
 
     markPortal(fiber, returnFiber);
@@ -1060,6 +1061,7 @@ const childDeletionFiber = (returnFiber) => {
 };
 
 const commitRoot = () => {
+  console.log("MutationQueue", Fiber.scheduler.MutationQueue.length);
   for (const fiber of Fiber.scheduler.MutationQueue) {
     const isHostFiber = fiber.tagType !== FunctionComponent;
 
@@ -1118,6 +1120,7 @@ const markPreHostRefer = (leafChild) => {
   ) {
     current.return.__refer = preHostFiber;
     current = current.return;
+
     if (isPortal(current)) {
       return;
     }
@@ -1143,15 +1146,23 @@ const innerRender = () => {
 
   finishedWork(current);
 
-  const temp = isCleanFiber ? walkFiberTree(current, markPortal) : [current];
+  let temp = [current];
+  if (isCleanFiber) {
+    if (isPortal(current)) {
+      temp = [];
+    } else if (current.child && current.tagType === FunctionComponent) {
+      temp = walkFiberTree(current, markPortal);
+    }
+  }
 
   for (const fiber of temp) {
-    let portalParent = null;
-    if (fiber.portalFlag & ReturnPortal) {
-      portalParent = findParentFiber(fiber, isPortal);
-    }
+    const portalParent =
+      fiber.portalFlag & ReturnPortal ? findParentFiber(fiber, isPortal) : null;
 
-    if (!fiber.child) {
+    if (
+      !fiber.child ||
+      (isCleanFiber && current.tagType !== FunctionComponent)
+    ) {
       if (!portalParent) {
         fiber.__refer = Fiber.scheduler.preHostFiber;
       } else {
