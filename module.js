@@ -75,14 +75,10 @@ const genQueueMacrotask = (macrotaskName) => {
 
     const startTime = Date.now();
     const timeoutTime = startTime + frameYieldMs;
-    const deadline = {
-      get didTimeout() {
-        return Date.now() > timeoutTime;
-      },
-    };
+    const didTimeout = () => Date.now() > timeoutTime;
 
     try {
-      while (scheduledQueue.length > 0 && !deadline.didTimeout) {
+      while (scheduledQueue.length > 0 && !didTimeout()) {
         const work = scheduledQueue.pop();
         const next = work();
         if (isFunction(next)) {
@@ -977,11 +973,11 @@ function* genFiberTree(returnFiber) {
     returnFiber.portalFlag |= SelfPortal;
   }
 
-  let isLeaf = true;
+  let isLeaf = 1;
   let fiber = returnFiber.child;
 
   while (fiber) {
-    isLeaf = false;
+    isLeaf = 0;
 
     if (returnFiber.tagType === FunctionComponent) {
       fiber.flags |= returnFiber.flags & Placement;
@@ -996,9 +992,9 @@ function* genFiberTree(returnFiber) {
     // }
 
     if (fiber.tagType === HostText) {
-      yield [fiber, true];
-      // } else if (!fiber.stateFlag) {
-      //   yield [fiber, !fiber.child];
+      yield [fiber, 1];
+    } else if (!fiber.stateFlag) {
+      yield [fiber, !fiber.child ? 1 : 2];
     } else {
       yield* genFiberTree(fiber);
     }
@@ -1141,34 +1137,38 @@ const innerRender = () => {
     return toCommit;
   }
 
-  const [fiber, isLeaf] = obj.value;
-  finishedWork(fiber);
+  const [current, isLeaf] = obj.value;
+  finishedWork(current);
 
-  let portalParent = null;
-  if (fiber.portalFlag & ReturnPortal) {
-    portalParent = findParentFiber(fiber, isPortal);
-  }
+  const temp = isLeaf === 2 ? walkFiberTree(current) : [current];
 
-  if (isLeaf) {
-    if (!portalParent) {
-      fiber.__refer = Fiber.scheduler.preHostFiber;
-    } else {
-      fiber.__refer = portalParent.__preHostFiber;
+  for (const fiber of temp) {
+    let portalParent = null;
+    if (fiber.portalFlag & ReturnPortal) {
+      portalParent = findParentFiber(fiber, isPortal);
     }
-    markPreHostRefer(fiber);
-  }
 
-  if (fiber.flags) {
-    Fiber.scheduler.MutationQueue.push(fiber);
-  } else {
-    Fiber.clean(fiber, false);
-  }
+    if (!fiber.child) {
+      if (!portalParent) {
+        fiber.__refer = Fiber.scheduler.preHostFiber;
+      } else {
+        fiber.__refer = portalParent.__preHostFiber;
+      }
+      markPreHostRefer(fiber);
+    }
 
-  if (fiber.tagType !== FunctionComponent) {
-    if (!portalParent) {
-      Fiber.scheduler.preHostFiber = fiber;
+    if (fiber.flags) {
+      Fiber.scheduler.MutationQueue.push(fiber);
     } else {
-      portalParent.__preHostFiber = fiber;
+      Fiber.clean(fiber, false);
+    }
+
+    if (fiber.tagType !== FunctionComponent) {
+      if (!portalParent) {
+        Fiber.scheduler.preHostFiber = fiber;
+      } else {
+        portalParent.__preHostFiber = fiber;
+      }
     }
   }
 
