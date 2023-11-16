@@ -6,6 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
+const noop = () => { };
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -64,7 +65,6 @@ const genQueueMacrotask = (macrotaskName) => {
   const frameYieldMs = 10;
   const scheduledQueue = [];
   const channel = new MessageChannel();
-  console.log(macrotaskName);
 
   let isLoopRunning = false;
   channel.port1.onmessage = () => {
@@ -766,9 +766,10 @@ function* walkChildFiber(returnFiber) {
   }
 }
 
-function* walkFiberTree(returnFiber) {
+function* walkFiberTree(returnFiber, fn = noop) {
   let fiber = returnFiber.child;
   while (fiber) {
+    fn(fiber, returnFiber)
     yield* walkFiberTree(fiber);
     fiber = fiber.sibling;
   }
@@ -970,6 +971,12 @@ const finishedWork = (fiber) => {
   }
 };
 
+const markPortal = (fiber, returnFiber) => {
+  if (returnFiber.portalFlag) {
+    fiber.portalFlag |= ReturnPortal;
+  }
+}
+
 function* genFiberTree(returnFiber) {
   beginWork(returnFiber);
 
@@ -977,24 +984,22 @@ function* genFiberTree(returnFiber) {
     returnFiber.portalFlag |= SelfPortal;
   }
 
-  let isLeaf = true;
+  let isCleanFiber = true;
   let fiber = returnFiber.child;
 
   while (fiber) {
-    isLeaf = false;
+    isCleanFiber = false;
 
-    if (returnFiber.tagType === FunctionComponent) {
-      fiber.flags |= returnFiber.flags & Placement;
+    if (returnFiber.tagType === FunctionComponent && (returnFiber.flags & Placement)) {
+      markPlacement(fiber)
     }
 
-    if (returnFiber.portalFlag) {
-      fiber.portalFlag |= ReturnPortal;
-    }
+    markPortal(fiber, returnFiber);
 
     if (fiber.tagType === HostText) {
       yield [fiber, true];
-    } else if (!fiber.stateFlag) {
-      yield [fiber, !fiber.child];
+    } else if (!fiber.stateFlag && !fiber.flags) {
+      yield [fiber, true];
     } else {
       yield* genFiberTree(fiber);
     }
@@ -1002,7 +1007,7 @@ function* genFiberTree(returnFiber) {
     fiber = fiber.sibling;
   }
 
-  yield [returnFiber, isLeaf];
+  yield [returnFiber, isCleanFiber];
 }
 
 const placementFiber = (fiber) => {
@@ -1055,9 +1060,6 @@ const childDeletionFiber = (returnFiber) => {
 };
 
 const commitRoot = () => {
-  console.log(
-    "Fiber.scheduler.MutationQueue: " + Fiber.scheduler.MutationQueue.length
-  );
   for (const fiber of Fiber.scheduler.MutationQueue) {
     const isHostFiber = fiber.tagType !== FunctionComponent;
 
@@ -1137,10 +1139,11 @@ const innerRender = () => {
     return toCommit;
   }
 
-  const [current, isLeaf] = obj.value;
+  const [current, isCleanFiber] = obj.value;
+
   finishedWork(current);
 
-  const temp = isLeaf ? walkFiberTree(current) : [current];
+  const temp = isCleanFiber ? walkFiberTree(current, markPortal) : [current];
 
   for (const fiber of temp) {
     let portalParent = null;
@@ -1157,12 +1160,6 @@ const innerRender = () => {
       markPreHostRefer(fiber);
     }
 
-    if (fiber.flags) {
-      Fiber.scheduler.MutationQueue.push(fiber);
-    } else {
-      Fiber.clean(fiber, false);
-    }
-
     if (fiber.tagType !== FunctionComponent) {
       if (!portalParent) {
         Fiber.scheduler.preHostFiber = fiber;
@@ -1170,6 +1167,16 @@ const innerRender = () => {
         portalParent.__preHostFiber = fiber;
       }
     }
+
+    if (fiber !== current) {
+      Fiber.clean(fiber, false);
+    }
+  }
+
+  if (current.flags) {
+    Fiber.scheduler.MutationQueue.push(current);
+  } else {
+    Fiber.clean(current, false);
   }
 
   return innerRender;
