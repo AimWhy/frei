@@ -443,7 +443,11 @@ export const createContext = (initialState) => {
 
       fiber.memoizedState ||= new Set();
       fiber.memoizedState.forEach((f) => {
-        f.stateFlag = SelfStateChange;
+        f.stateFlag |= SelfStateChange;
+        findParentFiber(f, (item) => {
+          item.stateFlag |= ChildStateChange;
+          return item === fiber;
+        })
       });
       fiber.memoizedState.clear();
 
@@ -721,7 +725,7 @@ const batchRerender = () => {
   label: for (const current of Fiber.RerenderSet) {
     current.updateQueue.forEach((fn) => fn());
     current.updateQueue.length = 0;
-    current.stateFlag = SelfStateChange;
+    current.stateFlag |= SelfStateChange;
 
     fiber = current;
     while (fiber) {
@@ -973,11 +977,11 @@ function* genFiberTree(returnFiber) {
     returnFiber.portalFlag |= SelfPortal;
   }
 
-  let isLeaf = 1;
+  let isLeaf = true;
   let fiber = returnFiber.child;
 
   while (fiber) {
-    isLeaf = 0;
+    isLeaf = false;
 
     if (returnFiber.tagType === FunctionComponent) {
       fiber.flags |= returnFiber.flags & Placement;
@@ -987,14 +991,10 @@ function* genFiberTree(returnFiber) {
       fiber.portalFlag |= ReturnPortal;
     }
 
-    // if (returnFiber.stateFlag) {
-    //   fiber.stateFlag |= ReturnStateChange;
-    // }
-
     if (fiber.tagType === HostText) {
-      yield [fiber, 1];
+      yield [fiber, true];
     } else if (!fiber.stateFlag) {
-      yield [fiber, !fiber.child ? 1 : 2];
+      yield [fiber, !fiber.child];
     } else {
       yield* genFiberTree(fiber);
     }
@@ -1140,7 +1140,7 @@ const innerRender = () => {
   const [current, isLeaf] = obj.value;
   finishedWork(current);
 
-  const temp = isLeaf === 2 ? walkFiberTree(current) : [current];
+  const temp = isLeaf ? walkFiberTree(current) : [current];
 
   for (const fiber of temp) {
     let portalParent = null;
