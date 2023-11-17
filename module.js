@@ -668,6 +668,7 @@ class Fiber {
       this.stateNode = hostConfig.createInstance(this.type);
       hostConfig.updateInstanceProps(this.stateNode, this);
     } else {
+      this.memoizedProps = this.pendingProps;
       this.tagType = FunctionComponent;
     }
   }
@@ -857,19 +858,19 @@ const beginWork = (returnFiber) => {
 };
 
 const finishedWork = (fiber) => {
-  if (!fiber.stateFlag) {
+  if (!fiber.flags) {
     fiber.memoizedProps = fiber.pendingProps;
   } else {
     const oldProps = fiber.memoizedProps || {};
     const newProps = fiber.pendingProps || {};
 
-    let isMarkUpdate = fiber.stateFlag & SelfStateChange;
+    let isMarkUpdate = false;
 
     if (oldProps.ref !== newProps.ref) {
       const oldRef = oldProps.ref;
       const newRef = newProps.ref;
 
-      isMarkUpdate |= 1;
+      isMarkUpdate = true;
 
       fiber.ref = (instance) => {
         if (isFunction(oldRef)) {
@@ -891,7 +892,7 @@ const finishedWork = (fiber) => {
     if (fiber.tagType === HostText) {
       if (!oldProps || newProps.content !== oldProps.content) {
         fiber.memoizedState = newProps.content;
-        isMarkUpdate |= 1;
+        isMarkUpdate = true;
       }
     } else if (fiber.tagType === HostComponent) {
       const attrs = [];
@@ -950,15 +951,14 @@ const finishedWork = (fiber) => {
 
       fiber.memoizedState = attrs;
       if (fiber.memoizedState.length) {
-        isMarkUpdate |= 1;
+        isMarkUpdate = true;
       }
     } else {
       if (
-        !isMarkUpdate &&
-        !(fiber.stateFlag & SelfStateInitial) &&
+        !(fiber.flags & Update) &&
         !objectEqual(fiber.memoizedProps, fiber.pendingProps)
       ) {
-        isMarkUpdate |= 1;
+        isMarkUpdate = true;
       }
     }
 
@@ -1144,6 +1144,9 @@ const innerRender = () => {
 
   const [current, isCleanFiber] = obj.value;
 
+  if (fiber.stateFlag & SelfStateChange) {
+    markUpdate(current);
+  }
   finishedWork(current);
 
   let temp = [current];
