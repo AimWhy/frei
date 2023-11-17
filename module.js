@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => {};
+const noop = () => { };
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -576,16 +576,20 @@ const toElement = (item) => {
 };
 
 const NoFlags = 0 << 0;
-const Placement = 1 << 0;
-const ChildDeletion = 1 << 1;
-const Update = 1 << 2;
-const MarkRef = 1 << 3;
+const MarkMount = 1 << 0;
+const MarkMoved = 1 << 1;
+const ChildDeletion = 1 << 2;
+const MarkUpdate = 1 << 3;
+const MarkRef = 1 << 4;
 
 const markUpdate = (fiber) => {
-  fiber.flags |= Update;
+  fiber.flags |= MarkUpdate;
 };
-const markPlacement = (fiber) => {
-  fiber.flags |= Placement;
+const markMount = (fiber) => {
+  fiber.flags |= MarkMount;
+};
+const markMoved = (fiber) => {
+  fiber.flags |= MarkMoved;
 };
 const markRef = (fiber) => {
   fiber.flags |= MarkRef;
@@ -630,7 +634,7 @@ class Fiber {
   return = null;
   sibling = null;
 
-  flags = Placement;
+  flags = MarkMount;
   portalFlag = NoPortal;
   stateFlag = SelfStateInitial;
 
@@ -695,12 +699,7 @@ class Fiber {
 
 Fiber.RerenderSet = new Set();
 Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
-Fiber.clean = (fiber, isCommit) => {
-  fiber.__refer = null;
-  fiber.flags = NoFlags;
-  // fiber.portalFlag = NoPortal;
-  fiber.stateFlag = NoStateChange;
-};
+
 Fiber.initLifecycle = (fiber) => {
   fiber.onMounted = new Set();
   fiber.onUnMounted = new Set();
@@ -835,7 +834,11 @@ const beginWork = (returnFiber) => {
         fiber.oldIndex <= preOldIndex ||
         fiber.memoizedProps.__target !== fiber.pendingProps.__target
       ) {
-        markPlacement(fiber);
+        if (fiber.oldIndex === -1) {
+          markMount(fiber)
+        } else {
+          markMoved(fiber);
+        }
       } else {
         preOldIndex = fiber.oldIndex;
       }
@@ -858,7 +861,7 @@ const beginWork = (returnFiber) => {
 };
 
 const finishedWork = (fiber) => {
-  if (!fiber.flags) {
+  if (!fiber.flags && !fiber.stateFlag) {
     fiber.memoizedProps = fiber.pendingProps;
   } else {
     const oldProps = fiber.memoizedProps || {};
@@ -955,7 +958,7 @@ const finishedWork = (fiber) => {
       }
     } else {
       if (
-        !(fiber.flags & Update) &&
+        !(fiber.flags & MarkUpdate) &&
         !objectEqual(fiber.memoizedProps, fiber.pendingProps)
       ) {
         isMarkUpdate = true;
@@ -976,6 +979,9 @@ const markPortal = (fiber, returnFiber) => {
 };
 
 function* genFiberTree(returnFiber) {
+  returnFiber.__refer = null;
+  returnFiber.portalFlag = NoPortal;
+
   beginWork(returnFiber);
 
   returnFiber.portalFlag = returnFiber.pendingProps.__target
@@ -990,9 +996,9 @@ function* genFiberTree(returnFiber) {
 
     if (
       returnFiber.tagType === FunctionComponent &&
-      returnFiber.flags & Placement
+      returnFiber.flags & MarkMoved
     ) {
-      markPlacement(fiber);
+      markMoved(fiber);
     }
 
     markPortal(fiber, returnFiber);
@@ -1070,31 +1076,37 @@ const commitRoot = () => {
       fiber.flags &= ~ChildDeletion;
     }
 
-    if (fiber.flags & Update) {
+    if (fiber.flags & MarkUpdate) {
       if (isHostFiber) {
         updateHostFiber(fiber);
       } else {
         dispatchHook(fiber, "onBeforeUpdate");
         dispatchHook(fiber, "onUpdated", true);
       }
-      fiber.flags &= ~Update;
+      fiber.flags &= ~MarkUpdate;
     }
 
-    if (fiber.flags & Placement) {
+    if (fiber.flags & MarkMount) {
       if (isHostFiber) {
         placementFiber(fiber);
       } else {
-        if (!(fiber.stateFlag & SelfStateInitial)) {
-          dispatchHook(fiber, "onBeforeMove");
-          dispatchHook(fiber, "onMoved", true);
-        } else {
-          dispatchHook(fiber, "onMounted", true);
-          dispatchHook(fiber, "onUpdated", true);
-        }
+        dispatchHook(fiber, "onMounted", true);
+        dispatchHook(fiber, "onUpdated", true);
       }
 
-      fiber.flags &= ~Placement;
+      fiber.flags &= ~MarkMount;
     }
+
+    if (fiber.flags & MarkMoved) {
+      if (isHostFiber) {
+        placementFiber(fiber);
+      } else {
+        dispatchHook(fiber, "onBeforeMove");
+        dispatchHook(fiber, "onMoved", true);
+      }
+      fiber.flags &= ~MarkMoved;
+    }
+
 
     if (fiber.flags & MarkRef) {
       if (isHostFiber) {
@@ -1105,8 +1117,8 @@ const commitRoot = () => {
 
       fiber.flags &= ~MarkRef;
     }
-
-    Fiber.clean(fiber, true);
+    fiber.stateFlag = NoStateChange;
+    fiber.flags = NoFlags;
   }
 };
 
@@ -1144,9 +1156,10 @@ const innerRender = () => {
 
   const [current, isCleanFiber] = obj.value;
 
-  if (fiber.stateFlag & SelfStateChange) {
+  if (current.stateFlag & SelfStateChange) {
     markUpdate(current);
   }
+
   finishedWork(current);
 
   let temp = [current];
@@ -1181,16 +1194,13 @@ const innerRender = () => {
         portalParent.__preHostFiber = fiber;
       }
     }
-
-    if (fiber !== current) {
-      Fiber.clean(fiber, false);
-    }
   }
 
   if (current.flags) {
     Fiber.scheduler.MutationQueue.push(current);
   } else {
-    Fiber.clean(current, false);
+    current.flags = NoFlags;
+    current.stateFlag = NoStateChange;
   }
 
   return innerRender;
