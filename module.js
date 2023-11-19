@@ -779,6 +779,9 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.pendingProps = element.props;
     fiber.sibling = null;
     fiber.return = null;
+    fiber.__skip = false;
+    fiber.__lastDirty = false;
+
     if (
       !(fiber.preStateFlag & SelfStateChange) &&
       !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
@@ -816,9 +819,9 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
   }
   return i;
 };
-
+const isSkipFiber = (f) => !f.flags && !f.preStateFlag;
 const beginWork = (returnFiber) => {
-  if (!(returnFiber.preStateFlag & SelfStateChange)) {
+  if (!returnFiber.preStateFlag) {
     return;
   }
 
@@ -832,7 +835,6 @@ const beginWork = (returnFiber) => {
   const deletionKey = deletionMap.size ? [] : null;
   let indexCount = [];
   let j = 0;
-  let lastDirtyFiber = null;
 
   const children = returnFiber.normalChildren;
   if (children !== null) {
@@ -851,7 +853,6 @@ const beginWork = (returnFiber) => {
 
       if (fiber.oldIndex === -1) {
         markMount(fiber);
-        lastDirtyFiber = fiber;
       } else {
         if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
           markMoved(fiber);
@@ -874,9 +875,6 @@ const beginWork = (returnFiber) => {
       }
 
       if (index === 0) {
-        if (!lastDirtyFiber) {
-          lastDirtyFiber = fiber;
-        }
         returnFiber.child = fiber;
       } else {
         preFiber.sibling = fiber;
@@ -903,15 +901,28 @@ const beginWork = (returnFiber) => {
       }
     }
 
-    if (lastDirtyFiber) {
-      let temp = lastDirtyFiber.sibling;
-      while (temp) {
-        if (temp.flags || temp.preStateFlag) {
-          lastDirtyFiber = temp;
+    if (!(returnFiber.flags & MarkMount)) {
+      let lastDirtyFiber;
+      let preFiber;
+      for (const f of walkChildFiber(returnFiber)) {
+        if (!lastDirtyFiber || f.flags || f.preStateFlag) {
+          lastDirtyFiber = f;
         }
-        temp = temp.sibling;
+
+        if (
+          preFiber &&
+          isSkipFiber(preFiber) &&
+          isSkipFiber(f) &&
+          !isPortal(f)
+        ) {
+          preFiber.__skip = true;
+        }
+        preFiber = f;
       }
-      lastDirtyFiber.__lastDirty = true;
+
+      if (lastDirtyFiber) {
+        lastDirtyFiber.__lastDirty = true;
+      }
     }
 
     for (const k of deletionKey) {
@@ -926,7 +937,7 @@ const beginWork = (returnFiber) => {
 };
 
 const finishedWork = (fiber) => {
-  if (!fiber.flags && !fiber.preStateFlag) {
+  if (isSkipFiber(fiber)) {
     fiber.memoizedProps = fiber.pendingProps;
   } else {
     const oldProps = fiber.memoizedProps || {};
@@ -1066,16 +1077,20 @@ function* genFiberTree(returnFiber) {
 
     markPortal(fiber, returnFiber);
 
+    if (fiber.__skip) {
+      fiber = fiber.sibling;
+      continue;
+    }
+
     if (fiber.tagType === HostText) {
       yield [fiber, true];
-    } else if (!fiber.preStateFlag && !fiber.flags) {
+    } else if (isSkipFiber(fiber)) {
       yield [fiber, true];
     } else {
       yield* genFiberTree(fiber);
     }
 
     if (fiber.__lastDirty) {
-      fiber.__lastDirty = false;
       break;
     }
 
