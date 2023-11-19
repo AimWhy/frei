@@ -624,7 +624,6 @@
   const NoStateChange = 0 << 0;
   const SelfStateChange = 1 << 0;
   const ChildStateChange = 1 << 1;
-  const ReturnStateChange = 1 << 2;
 
   class Fiber {
     key = null;
@@ -650,7 +649,7 @@
 
     flags = MarkMount;
     portalFlag = NoPortal;
-    preStateFlag = ReturnStateChange;
+    preStateFlag = SelfStateChange;
 
     get normalChildren() {
       if (this.tagType === HostText) {
@@ -688,7 +687,6 @@
         this.stateNode = hostConfig.createInstance(this.type);
         hostConfig.updateInstanceProps(this.stateNode, this);
       } else {
-        this.preStateFlag = SelfStateChange;
         this.tagType = FunctionComponent;
       }
     }
@@ -791,16 +789,19 @@
     yield returnFiber;
   }
 
-  const createFiber = (element, key, pNodeKey, deletionMap) => {
-    const nodeKey = Fiber.genNodeKey(key, pNodeKey);
+  const createFiber = (element, key, nodeKey, deletionMap) => {
     let fiber = deletionMap.size ? deletionMap.get(nodeKey) : null;
 
     if (fiber) {
       fiber.pendingProps = element.props;
       fiber.sibling = null;
       fiber.return = null;
-      fiber.preStateFlag |= ReturnStateChange;
-      deletionMap.delete(nodeKey);
+      if (
+        !(fiber.preStateFlag & SelfStateChange) &&
+        !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
+      ) {
+        fiber.preStateFlag |= SelfStateChange;
+      }
     } else {
       fiber = new Fiber(element, key, nodeKey);
     }
@@ -818,11 +819,23 @@
     }
   };
 
+  const findIndex = (nodeKeyArr, fiber, fiberMap) => {
+    let i = 0;
+    let j = nodeKeyArr.length;
+    while (i !== j) {
+      const mid = Math.floor((i + j) / 2);
+      const tempFiber = fiberMap.get(nodeKeyArr[mid]);
+      if (tempFiber.oldIndex < fiber.oldIndex) {
+        i = mid + 1;
+      } else {
+        j = mid;
+      }
+    }
+    return i;
+  };
+
   const beginWork = (returnFiber) => {
-    if (
-      !(returnFiber.preStateFlag & SelfStateChange) &&
-      objectEqual(returnFiber.pendingProps, returnFiber.memoizedProps, true)
-    ) {
+    if (!(returnFiber.preStateFlag & SelfStateChange)) {
       return;
     }
 
@@ -832,37 +845,47 @@
     }
     returnFiber.child = null;
 
+    const increasing = deletionMap.size ? [] : null;
+    const deletionKey = deletionMap.size ? [] : null;
+    let indexCount = [];
+    let j = 0;
+
     const children = returnFiber.normalChildren;
     if (children !== null) {
       let preFiber = null;
-      let preOldIndex = -1;
+
       for (let index = 0; index < children.length; index++) {
         const element = children[index];
         const key =
           (isString(element.type) ? element.type : element.type.name) +
           "#" +
           (element.key != null ? element.key : index);
-        const fiber = createFiber(
-          element,
-          key,
-          returnFiber.nodeKey,
-          deletionMap
-        );
+        const nodeKey = Fiber.genNodeKey(key, returnFiber.nodeKey);
+        const fiber = createFiber(element, key, nodeKey, deletionMap);
         fiber.index = index;
         fiber.return = returnFiber;
 
-        if (
-          fiber.oldIndex === -1 ||
-          fiber.oldIndex <= preOldIndex ||
-          fiber.memoizedProps.__target !== fiber.pendingProps.__target
-        ) {
-          if (fiber.oldIndex === -1) {
-            markMount(fiber);
-          } else {
-            markMoved(fiber);
-          }
+        if (fiber.oldIndex === -1) {
+          markMount(fiber);
         } else {
-          preOldIndex = fiber.oldIndex;
+          if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
+            markMoved(fiber);
+            deletionKey.push(nodeKey);
+
+            const i = findIndex(increasing, fiber, deletionMap);
+            if (i + 1 > increasing.length) {
+              increasing.push(nodeKey);
+              indexCount[j++] = increasing.length;
+            } else {
+              increasing[i] = nodeKey;
+              indexCount[j++] = i + 1;
+            }
+          } else {
+            if (fiber.memoizedProps.__target !== fiber.pendingProps.__target) {
+              markMoved(fiber);
+            }
+            deletionMap.delete(nodeKey);
+          }
         }
 
         if (index === 0) {
@@ -871,14 +894,35 @@
           preFiber.sibling = fiber;
         }
 
-        fiber.oldIndex = fiber.index;
         preFiber = fiber;
       }
     }
 
-    if (deletionMap.size) {
-      returnFiber.__deletion = deletionMap;
-      markChildDeletion(returnFiber);
+    if (deletionMap.size || (increasing && increasing.length)) {
+      // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
+      // 所以需要再走一遍构建 increasing 的逻辑
+      let max = Math.max(...indexCount);
+      for (let i = deletionKey.length - 1; max > 0; i--) {
+        if (indexCount[i] === max) {
+          increasing[max - 1] = deletionKey[i];
+          max--;
+        }
+      }
+
+      if (increasing) {
+        for (const anchor of increasing) {
+          deletionMap.get(anchor).flags &= ~MarkMoved;
+        }
+      }
+
+      for (const k of deletionKey) {
+        deletionMap.delete(k);
+      }
+
+      if (deletionMap.size) {
+        returnFiber.__deletion = deletionMap;
+        markChildDeletion(returnFiber);
+      }
     }
   };
 
@@ -981,8 +1025,7 @@
       } else {
         if (
           !(fiber.flags & MarkMount) &&
-          (fiber.preStateFlag & SelfStateChange ||
-            !objectEqual(fiber.memoizedProps, fiber.pendingProps))
+          fiber.preStateFlag & SelfStateChange
         ) {
           isMarkUpdate = true;
         }
@@ -1015,6 +1058,7 @@
     let fiber = returnFiber.child;
 
     while (fiber) {
+      fiber.oldIndex = fiber.index;
       isCleanFiber = false;
 
       if (
@@ -1252,7 +1296,7 @@
             props: { children: element },
           },
           key,
-          "",
+          key,
           new Map()
         );
 

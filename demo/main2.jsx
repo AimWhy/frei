@@ -58,7 +58,9 @@ function App() {
       <NameContext.Provider value={name}>
         <button onClick={() => setName((a) => a + 1)}>换名字</button>
         <div>{name}</div>
-        <Hello school="school"></Hello>
+        <div>
+          <Hello school="school"></Hello>
+        </div>
       </NameContext.Provider>
 
       <Fragment key="799" __target={document.body}>

@@ -115,7 +115,7 @@ const listReducer = (state, action) => {
         : state;
     case "REMOVE": {
       return {
-        data: data.filter(item => item.id !== action.id),
+        data: data.filter((item) => item.id !== action.id),
         selected,
       };
     }
