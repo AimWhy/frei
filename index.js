@@ -849,6 +849,7 @@
     const deletionKey = deletionMap.size ? [] : null;
     let indexCount = [];
     let j = 0;
+    let lastDirtyFiber = null;
 
     const children = returnFiber.normalChildren;
     if (children !== null) {
@@ -867,6 +868,7 @@
 
         if (fiber.oldIndex === -1) {
           markMount(fiber);
+          lastDirtyFiber = fiber;
         } else {
           if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
             markMoved(fiber);
@@ -889,6 +891,9 @@
         }
 
         if (index === 0) {
+          if (!lastDirtyFiber) {
+            lastDirtyFiber = fiber;
+          }
           returnFiber.child = fiber;
         } else {
           preFiber.sibling = fiber;
@@ -913,6 +918,17 @@
         for (const anchor of increasing) {
           deletionMap.get(anchor).flags &= ~MarkMoved;
         }
+      }
+
+      if (lastDirtyFiber) {
+        let temp = lastDirtyFiber.sibling;
+        while (temp) {
+          if (temp.flags || temp.preStateFlag) {
+            lastDirtyFiber = temp;
+          }
+          temp = temp.sibling;
+        }
+        lastDirtyFiber.__lastDirty = true;
       }
 
       for (const k of deletionKey) {
@@ -1076,6 +1092,11 @@
         yield [fiber, true];
       } else {
         yield* genFiberTree(fiber);
+      }
+
+      if (fiber.__lastDirty) {
+        fiber.__lastDirty = false;
+        break;
       }
 
       fiber = fiber.sibling;
