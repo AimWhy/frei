@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => {};
+const noop = () => { };
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -904,6 +904,7 @@ const beginWork = (returnFiber) => {
     if (!(returnFiber.flags & MarkMount)) {
       let lastDirtyFiber;
       let preFiber;
+      let isFirst = true;
       for (const f of walkChildFiber(returnFiber)) {
         if (!lastDirtyFiber || f.flags || f.preStateFlag) {
           lastDirtyFiber = f;
@@ -915,7 +916,10 @@ const beginWork = (returnFiber) => {
           !(f.flags & (MarkMount | MarkMoved)) &&
           !isPortal(f)
         ) {
-          preFiber.__skip = true;
+          if (!isFirst) {
+            preFiber.__skip = true;
+          }
+          isFirst = false;
         }
         preFiber = f;
       }
