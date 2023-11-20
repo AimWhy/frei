@@ -1154,8 +1154,6 @@ const childDeletionFiber = (returnFiber) => {
 };
 
 const commitRoot = () => {
-  console.log("MutationQueue: " + Fiber.scheduler.MutationQueue.length);
-
   for (const fiber of Fiber.scheduler.MutationQueue) {
     const isHostFiber = fiber.tagType !== FunctionComponent;
 
@@ -1259,8 +1257,6 @@ const innerRender = () => {
   }
 
   const [current, isCleanFiber] = obj.value;
-
-  // console.count("innerRender: " + current.nodeKey);
 
   finishedWork(current);
 

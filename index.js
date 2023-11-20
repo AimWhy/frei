@@ -2,10 +2,10 @@
   typeof exports === "object" && typeof module !== "undefined"
     ? factory(exports)
     : typeof define === "function" && define.amd
-    ? define(["exports"], factory)
-    : ((global =
+      ? define(["exports"], factory)
+      : ((global =
         typeof globalThis !== "undefined" ? globalThis : global || self),
-      factory((global.frei = {})));
+        factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
 
@@ -17,7 +17,7 @@
 
   const Fragment = (props) => props.children;
 
-  const noop = () => {};
+  const noop = () => { };
   const isArray = (val) => Array.isArray(val);
   const isString = (val) => typeof val === "string";
   const isFunction = (val) => typeof val === "function";
@@ -205,11 +205,7 @@
       return console.warn("事件不存在target", e);
     }
 
-    const { bubble, capture } = collectPaths(
-      targetElement,
-      container,
-      eventType
-    );
+    const { bubble, capture } = collectPaths(targetElement, container, eventType);
     const syntheticEvent = createSyntheticEvent(e);
 
     triggerEventFlow(capture, syntheticEvent);
@@ -679,9 +675,7 @@
       if (this.type === "text") {
         this.tagType = HostText;
         this.memoizedProps = this.pendingProps;
-        this.stateNode = hostConfig.createTextInstance(
-          this.pendingProps.content
-        );
+        this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
       } else if (isString(this.type)) {
         this.tagType = HostComponent;
         this.stateNode = hostConfig.createInstance(this.type);
@@ -921,6 +915,7 @@
       if (!(returnFiber.flags & MarkMount)) {
         let lastDirtyFiber;
         let preFiber;
+        let isFirst = true;
         for (const f of walkChildFiber(returnFiber)) {
           if (!lastDirtyFiber || f.flags || f.preStateFlag) {
             lastDirtyFiber = f;
@@ -929,10 +924,13 @@
           if (
             preFiber &&
             isSkipFiber(preFiber) &&
-            isSkipFiber(f) &&
+            !(f.flags & (MarkMount | MarkMoved)) &&
             !isPortal(f)
           ) {
-            preFiber.__skip = true;
+            if (!isFirst) {
+              preFiber.__skip = true;
+            }
+            isFirst = false;
           }
           preFiber = f;
         }
@@ -1050,10 +1048,7 @@
           isMarkUpdate = true;
         }
       } else {
-        if (
-          !(fiber.flags & MarkMount) &&
-          fiber.preStateFlag & SelfStateChange
-        ) {
+        if (!(fiber.flags & MarkMount) && fiber.preStateFlag & SelfStateChange) {
           isMarkUpdate = true;
         }
       }
