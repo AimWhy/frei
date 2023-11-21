@@ -1,5 +1,23 @@
 # frei
 
+# 已实现的api
+```js
+  exports.jsx = jsx;
+  exports.Fragment = Fragment;
+  exports.objectEqual = objectEqual;
+  exports.useReducer = useReducer;
+  exports.useRef = useRef;
+  exports.useState = useState;
+  exports.createContext = createContext;
+  exports.useContext = useContext;
+  exports.useEffect = useEffect;
+  exports.useSyncExternalStore = useSyncExternalStore;
+  exports.useFiber = useFiber;
+  exports.createRoot = createRoot;
+```
+
+
+# 代码实例：
 ```jsx
 import {
   createRoot,
