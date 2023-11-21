@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => { };
+const noop = () => {};
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -444,9 +444,9 @@ export const createContext = (initialState) => {
 
       fiber.memoizedState ||= new Set();
       fiber.memoizedState.forEach((f) => {
-        f.preStateFlag |= SelfStateChange;
+        f.renderFlag |= RenderForce;
         findParentFiber(f, (item) => {
-          item.preStateFlag |= ChildStateChange;
+          item.renderFlag |= RenderCheck;
           return item === fiber;
         });
       });
@@ -606,9 +606,9 @@ const NoPortal = 0 << 0;
 const SelfPortal = 1 << 0;
 const ReturnPortal = 1 << 1;
 
-const NoStateChange = 0 << 0;
-const SelfStateChange = 1 << 0;
-const ChildStateChange = 1 << 1;
+const RenderSkip = 0 << 0;
+const RenderForce = 1 << 0;
+const RenderCheck = 1 << 1;
 
 class Fiber {
   key = null;
@@ -634,7 +634,7 @@ class Fiber {
 
   flags = MarkMount;
   portalFlag = NoPortal;
-  preStateFlag = SelfStateChange;
+  renderFlag = RenderForce;
 
   get normalChildren() {
     if (this.tagType === HostText) {
@@ -721,7 +721,7 @@ const batchRerender = () => {
   label: for (const current of Fiber.RerenderSet) {
     current.updateQueue.forEach(runUpdate);
     current.updateQueue.length = 0;
-    current.preStateFlag |= SelfStateChange;
+    current.renderFlag |= RenderForce;
 
     fiber = current;
     while (fiber) {
@@ -739,7 +739,7 @@ const batchRerender = () => {
       fiber = fiber.return;
 
       if (fiber) {
-        fiber.preStateFlag |= ChildStateChange;
+        fiber.renderFlag |= RenderCheck;
       }
     }
   }
@@ -748,7 +748,7 @@ const batchRerender = () => {
 
   if (commonReturnHost) {
     findParentFiber(commonReturnHost, (f) => {
-      f.preStateFlag &= ~ChildStateChange;
+      f.renderFlag &= ~RenderCheck;
     });
     commonReturnHost.rerender();
   }
@@ -783,10 +783,10 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.__lastDirty = false;
 
     if (
-      !(fiber.preStateFlag & SelfStateChange) &&
+      !(fiber.renderFlag & RenderForce) &&
       !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
     ) {
-      fiber.preStateFlag |= SelfStateChange;
+      fiber.renderFlag |= RenderForce;
     }
   } else {
     fiber = new Fiber(element, key, nodeKey);
@@ -819,9 +819,9 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
   }
   return i;
 };
-const isSkipFiber = (f) => !f.flags && !f.preStateFlag;
+const isSkipFiber = (f) => !f.flags && !f.renderFlag;
 const beginWork = (returnFiber) => {
-  if (!returnFiber.preStateFlag) {
+  if (!returnFiber.renderFlag) {
     return;
   }
 
@@ -897,6 +897,7 @@ const beginWork = (returnFiber) => {
 
     if (increasing) {
       for (const anchor of increasing) {
+        // 属于递增子序列里，取消标记位移
         deletionMap.get(anchor).flags &= ~MarkMoved;
       }
     }
@@ -906,7 +907,7 @@ const beginWork = (returnFiber) => {
       let preFiber;
       let isFirst = true;
       for (const f of walkChildFiber(returnFiber)) {
-        if (!lastDirtyFiber || f.flags || f.preStateFlag) {
+        if (!lastDirtyFiber || !isSkipFiber(f)) {
           lastDirtyFiber = f;
         }
 
@@ -1037,7 +1038,7 @@ const finishedWork = (fiber) => {
         isMarkUpdate = true;
       }
     } else {
-      if (!(fiber.flags & MarkMount) && fiber.preStateFlag & SelfStateChange) {
+      if (!(fiber.flags & MarkMount) && fiber.renderFlag & RenderForce) {
         isMarkUpdate = true;
       }
     }
@@ -1203,7 +1204,7 @@ const commitRoot = () => {
       fiber.flags &= ~MarkRef;
     }
 
-    fiber.preStateFlag = NoStateChange;
+    fiber.renderFlag = RenderSkip;
     fiber.flags = NoFlags;
   }
 };
@@ -1295,7 +1296,7 @@ const innerRender = () => {
     Fiber.scheduler.MutationQueue.push(current);
   } else {
     current.flags = NoFlags;
-    current.preStateFlag = NoStateChange;
+    current.renderFlag = RenderSkip;
   }
 
   return innerRender;
