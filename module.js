@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => {};
+const noop = () => { };
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -878,9 +878,18 @@ const beginWork = (returnFiber) => {
           if (fiber.memoizedProps.__target !== fiber.pendingProps.__target) {
             markMoved(fiber);
           }
+
           deletionMap.delete(nodeKey);
         }
       }
+
+      if (fiber.pendingProps.__target) {
+        fiber.portalFlag |= SelfPortal;
+      } else {
+        fiber.portalFlag &= ~SelfPortal;
+      }
+
+      markPortal(fiber, returnFiber);
 
       if (index === 0) {
         returnFiber.child = fiber;
@@ -949,6 +958,7 @@ const beginWork = (returnFiber) => {
   }
 };
 
+const skipKeySet = new Set();
 const finishedWork = (fiber) => {
   if (isSkipFiber(fiber)) {
     fiber.memoizedProps = fiber.pendingProps;
@@ -988,7 +998,6 @@ const finishedWork = (fiber) => {
       }
     } else if (fiber.tagType === HostComponent) {
       const attrs = [];
-      const skip = Object.create(null);
 
       for (const pKey in newProps) {
         const pValue = newProps[pKey];
@@ -996,7 +1005,7 @@ const finishedWork = (fiber) => {
 
         if (pKey in oldProps) {
           oldPValue = oldProps[pKey];
-          skip[pKey] = true;
+          skipKeySet.add(pKey);
         }
 
         if (
@@ -1027,7 +1036,7 @@ const finishedWork = (fiber) => {
           pKey === "children" ||
           pKey === "ref" ||
           pKey[0] === "_" ||
-          skip[pKey]
+          skipKeySet.has(pKey)
         ) {
           continue;
         }
@@ -1040,6 +1049,8 @@ const finishedWork = (fiber) => {
           attrs.push(pKey, void 0);
         }
       }
+
+      skipKeySet.clear();
 
       fiber.memoizedState = attrs;
       if (fiber.memoizedState.length) {
@@ -1066,20 +1077,15 @@ const markPortal = (fiber, returnFiber) => {
 
 function* genFiberTree(returnFiber) {
   returnFiber.__refer = null;
-  returnFiber.portalFlag = NoPortal;
 
   beginWork(returnFiber);
 
-  returnFiber.portalFlag = returnFiber.pendingProps.__target
-    ? SelfPortal
-    : NoPortal;
-
-  let isCleanFiber = true;
+  let isSkip = true;
   let fiber = returnFiber.child;
 
   while (fiber) {
     fiber.oldIndex = fiber.index;
-    isCleanFiber = false;
+    isSkip = false;
 
     if (
       returnFiber.tagType === FunctionComponent &&
@@ -1087,8 +1093,6 @@ function* genFiberTree(returnFiber) {
     ) {
       markMoved(fiber);
     }
-
-    markPortal(fiber, returnFiber);
 
     if (fiber.__skip) {
       fiber = fiber.sibling;
@@ -1110,7 +1114,7 @@ function* genFiberTree(returnFiber) {
     fiber = fiber.sibling;
   }
 
-  yield [returnFiber, isCleanFiber];
+  yield [returnFiber, isSkip];
 }
 
 const placementFiber = (fiber) => {
@@ -1265,7 +1269,7 @@ const innerRender = () => {
     return toCommit;
   }
 
-  const [current, isCleanFiber] = obj.value;
+  const [current, isSkip] = obj.value;
 
   finishedWork(current);
 
@@ -1275,7 +1279,7 @@ const innerRender = () => {
         ? findParentFiber(current, isPortal)
         : null;
 
-    if (!current.child || isCleanFiber) {
+    if (!current.child || isSkip) {
       if (!portalParent) {
         current.__refer = Fiber.scheduler.preHostFiber;
       } else {
@@ -1287,7 +1291,7 @@ const innerRender = () => {
     let referFiber = null;
     if (current.tagType !== FunctionComponent) {
       referFiber = current;
-    } else if (isCleanFiber) {
+    } else if (isSkip) {
       referFiber = findLastRefer(current);
     }
 
