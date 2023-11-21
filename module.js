@@ -819,16 +819,24 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
   }
   return i;
 };
+
+const EmptyMap = new Map();
+
 const isSkipFiber = (f) => !f.flags && !f.renderFlag;
+
 const beginWork = (returnFiber) => {
   if (!returnFiber.renderFlag) {
     return;
   }
 
-  const deletionMap = new Map();
-  for (const oldFiber of walkChildFiber(returnFiber)) {
-    deletionMap.set(oldFiber.nodeKey, oldFiber);
+  let deletionMap = EmptyMap;
+  if (!(returnFiber.flags & MarkMount)) {
+    deletionMap = new Map();
+    for (const oldFiber of walkChildFiber(returnFiber)) {
+      deletionMap.set(oldFiber.nodeKey, oldFiber);
+    }
   }
+
   returnFiber.child = null;
 
   const increasing = deletionMap.size ? [] : null;
@@ -1318,7 +1326,7 @@ export const createRoot = (container) => {
         },
         key,
         key,
-        new Map()
+        EmptyMap
       );
 
       rootFiber.stateNode = container;
