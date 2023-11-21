@@ -841,7 +841,7 @@ const beginWork = (returnFiber) => {
 
   const increasing = deletionMap.size ? [] : null;
   const deletionKey = deletionMap.size ? [] : null;
-  let indexCount = [];
+  let indexCount = deletionMap.size ? [] : null;
   let j = 0;
 
   const children = returnFiber.normalChildren;
