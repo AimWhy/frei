@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => { };
+const noop = () => {};
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -80,7 +80,10 @@ const genQueueMacrotask = (macrotaskName) => {
     try {
       while (scheduledQueue.length > 0 && !didTimeout()) {
         const work = scheduledQueue[scheduledQueue.length - 1];
+
+        // 执行之前记录一下 len
         const next = work();
+        // 执行之后再记录一下 len, 是否有添加？
 
         if (isFunction(next)) {
           scheduledQueue[scheduledQueue.length - 1] = next;
@@ -100,13 +103,11 @@ const genQueueMacrotask = (macrotaskName) => {
   const schedulePerform = () => channel.port2.postMessage(null);
 
   return (task) => {
-    if (!scheduledQueue.includes(task)) {
-      scheduledQueue.unshift(task);
+    scheduledQueue.unshift(task);
 
-      if (!isLoopRunning) {
-        isLoopRunning = true;
-        schedulePerform();
-      }
+    if (!isLoopRunning) {
+      isLoopRunning = true;
+      schedulePerform();
     }
   };
 };
@@ -195,12 +196,12 @@ const dispatchEvent = (container, eventType, e) => {
   }
 
   const { bubble, capture } = collectPaths(targetElement, container, eventType);
-  const syntheticEvent = createSyntheticEvent(e);
+  const se = createSyntheticEvent(e);
 
-  triggerEventFlow(capture, syntheticEvent);
+  triggerEventFlow(capture, se);
 
-  if (!syntheticEvent.__stopPropagation) {
-    triggerEventFlow(bubble, syntheticEvent);
+  if (!se.__stopPropagation) {
+    triggerEventFlow(bubble, se);
   }
 };
 
@@ -227,16 +228,19 @@ const onCompositionStart = (e) => {
   e.target.composing = true;
 };
 const onCompositionEnd = (e) => {
-  const target = e.target;
-  if (target.composing) {
-    target.composing = false;
-    target.dispatchEvent(new Event("input"));
+  if (e.target.composing) {
+    e.target.composing = false;
+    e.target.dispatchEvent(new Event("input"));
   }
 };
 const onInputFixed = (e) => {
   if (!e.target.composing) {
-    const elementProps = e.target[elementPropsKey].memoizedProps;
-    elementProps["onInput"](e);
+    const elementProps = e.target[elementPropsKey]
+      ? e.target[elementPropsKey].memoizedProps
+      : null;
+    if (elementProps && elementProps.onInput) {
+      elementProps.onInput(e);
+    }
   }
 };
 const eventCallback = (e) => {
@@ -250,9 +254,7 @@ const eventCallback = (e) => {
 };
 
 const camelizePlacer = (_, c) => (c ? c.toUpperCase() : "");
-const camelize = (str) => {
-  return str.replace(/-(\w)/g, camelizePlacer);
-};
+const camelize = (str) => str.replace(/-(\w)/g, camelizePlacer);
 
 const setStyle = (style, name, val) => {
   if (isArray(val)) {
@@ -261,7 +263,6 @@ const setStyle = (style, name, val) => {
     if (val == null) {
       val = "";
     }
-
     if (name.startsWith("--")) {
       style.setProperty(name, val);
     } else {
@@ -679,18 +680,8 @@ class Fiber {
       return;
     }
 
-    if (!isContainerFiber(this)) {
-      Fiber.RerenderSet.add(this);
-      mainQueueMacrotask(batchRerender);
-    } else {
-      Fiber.scheduler = {
-        preHostFiber: null,
-        MutationQueue: [],
-        gen: genFiberTree(this),
-        restoreDataFn: hostConfig.genRestoreDataFn(),
-      };
-      mainQueueMacrotask(innerRender);
-    }
+    Fiber.RerenderSet.add(this);
+    mainQueueMacrotask(batchRerender);
   }
 }
 
@@ -719,8 +710,11 @@ const batchRerender = () => {
   let fiber = null;
 
   label: for (const current of Fiber.RerenderSet) {
-    current.updateQueue.forEach(runUpdate);
-    current.updateQueue.length = 0;
+    if (current.updateQueue) {
+      current.updateQueue.forEach(runUpdate);
+      current.updateQueue.length = 0;
+    }
+
     current.renderFlag |= RenderForce;
 
     fiber = current;
@@ -750,7 +744,15 @@ const batchRerender = () => {
     findParentFiber(commonReturnHost, (f) => {
       f.renderFlag &= ~RenderCheck;
     });
-    commonReturnHost.rerender();
+
+    Fiber.scheduler = {
+      preHostFiber: null,
+      MutationQueue: [],
+      gen: genFiberTree(commonReturnHost),
+      restoreDataFn: hostConfig.genRestoreDataFn(),
+    };
+
+    mainQueueMacrotask(innerRender);
   }
 };
 
@@ -843,6 +845,7 @@ const beginWork = (returnFiber) => {
   const deletionKey = deletionMap.size ? [] : null;
   let indexCount = deletionMap.size ? [] : null;
   let j = 0;
+  let lastDirtyFiber = null;
 
   const children = returnFiber.normalChildren;
   if (children !== null) {
@@ -861,6 +864,7 @@ const beginWork = (returnFiber) => {
 
       if (fiber.oldIndex === -1) {
         markMount(fiber);
+        lastDirtyFiber = fiber;
       } else {
         if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
           markMoved(fiber);
@@ -877,19 +881,21 @@ const beginWork = (returnFiber) => {
         } else {
           if (fiber.memoizedProps.__target !== fiber.pendingProps.__target) {
             markMoved(fiber);
+            lastDirtyFiber = fiber;
+          } else if (!isSkipFiber(fiber)) {
+            lastDirtyFiber = fiber;
           }
 
           deletionMap.delete(nodeKey);
         }
       }
 
+      markPortal(fiber, returnFiber);
       if (fiber.pendingProps.__target) {
         fiber.portalFlag |= SelfPortal;
       } else {
         fiber.portalFlag &= ~SelfPortal;
       }
-
-      markPortal(fiber, returnFiber);
 
       if (index === 0) {
         returnFiber.child = fiber;
@@ -901,60 +907,59 @@ const beginWork = (returnFiber) => {
     }
   }
 
-  if (deletionMap.size || (increasing && increasing.length)) {
-    // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
-    // 所以需要再走一遍构建 increasing 的逻辑
+  // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
+  // 所以需要再走一遍构建 increasing 的逻辑
+  if (indexCount) {
     let max = Math.max(...indexCount);
-    for (let i = deletionKey.length - 1; max > 0; i--) {
-      if (indexCount[i] === max) {
-        increasing[max - 1] = deletionKey[i];
-        max--;
-      }
-    }
 
-    if (increasing) {
-      for (const anchor of increasing) {
+    for (let i = deletionKey.length - 1; i > -1; i--) {
+      const fiberKey = deletionKey[i];
+      const fiber = deletionMap.get(fiberKey);
+
+      // 位置复用
+      if (max > 0 && indexCount[i] === max) {
+        increasing[max - 1] = fiberKey;
         // 属于递增子序列里，取消标记位移
-        deletionMap.get(anchor).flags &= ~MarkMoved;
-      }
-    }
+        fiber.flags &= ~MarkMoved;
+        max--;
 
-    if (!(returnFiber.flags & MarkMount)) {
-      let lastDirtyFiber;
-      let preFiber;
-      let isFirst = true;
-      for (const f of walkChildFiber(returnFiber)) {
-        if (!lastDirtyFiber || !isSkipFiber(f)) {
-          lastDirtyFiber = f;
-        }
-
-        if (
-          preFiber &&
-          isSkipFiber(preFiber) &&
-          !(f.flags & (MarkMount | MarkMoved)) &&
-          !isPortal(f)
-        ) {
-          if (!isFirst) {
-            preFiber.__skip = true;
+        // first-fiber 不能跳过，否则更新 __refer 值逻辑向上不会执行
+        if (fiber !== returnFiber.child && isSkipFiber(fiber)) {
+          if (
+            !fiber.sibling ||
+            (!(fiber.sibling.flags & (MarkMount | MarkMoved)) &&
+              !isPortal(fiber.sibling))
+          ) {
+            console.log("__skip: " + fiber.nodeKey);
+            fiber.__skip = true;
           }
-          isFirst = false;
         }
-        preFiber = f;
       }
 
-      if (lastDirtyFiber) {
-        lastDirtyFiber.__lastDirty = true;
+      if (
+        !lastDirtyFiber ||
+        (fiber.index >= lastDirtyFiber.index && !isSkipFiber(fiber))
+      ) {
+        lastDirtyFiber = fiber;
       }
     }
+  }
 
+  if (lastDirtyFiber) {
+    // console.log("lastDirtyFiber: " + lastDirtyFiber.nodeKey);
+
+    lastDirtyFiber.__lastDirty = true;
+  }
+
+  if (deletionKey) {
     for (const k of deletionKey) {
       deletionMap.delete(k);
     }
+  }
 
-    if (deletionMap.size) {
-      returnFiber.__deletion = deletionMap;
-      markChildDeletion(returnFiber);
-    }
+  if (deletionMap.size) {
+    returnFiber.__deletion = deletionMap;
+    markChildDeletion(returnFiber);
   }
 };
 
