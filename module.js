@@ -930,7 +930,6 @@ const beginWork = (returnFiber) => {
             (!(fiber.sibling.flags & (MarkMount | MarkMoved)) &&
               !isPortal(fiber.sibling))
           ) {
-            console.log("__skip: " + fiber.nodeKey);
             fiber.__skip = true;
           }
         }
@@ -946,8 +945,6 @@ const beginWork = (returnFiber) => {
   }
 
   if (lastDirtyFiber) {
-    // console.log("lastDirtyFiber: " + lastDirtyFiber.nodeKey);
-
     lastDirtyFiber.__lastDirty = true;
   }
 
@@ -1005,6 +1002,10 @@ const finishedWork = (fiber) => {
       const attrs = [];
 
       for (const pKey in newProps) {
+        if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
+          continue;
+        }
+
         const pValue = newProps[pKey];
         let oldPValue = void 0;
 
@@ -1013,26 +1014,25 @@ const finishedWork = (fiber) => {
           skipKeySet.add(pKey);
         }
 
-        if (
-          pKey === "children" ||
-          pKey === "ref" ||
-          pKey[0] === "_" ||
-          pValue === oldPValue
-        ) {
+        if (objectEqual(pValue, oldPValue, true)) {
           continue;
         }
 
         if (testHostSpecialAttr(pKey)) {
-          if (hostSpecialAttrSet.has(pKey)) {
-            attrs.push(pKey, pValue);
+          if (
+            hostSpecialAttrSet.has(pKey) &&
+            isFunction(pValue) ^ isFunction(oldPValue)
+          ) {
+            attrs.push(pKey, isFunction(pValue) ? pValue : void 0);
           }
+          continue;
+        }
+
+        const isBoolean = isSpecialBooleanAttr(pKey);
+        if (pValue == null || (isBoolean && !includeBooleanAttr(pValue))) {
+          attrs.push(pKey, void 0);
         } else {
-          const isBoolean = isSpecialBooleanAttr(pKey);
-          if (pValue == null || (isBoolean && !includeBooleanAttr(pValue))) {
-            attrs.push(pKey, void 0);
-          } else {
-            attrs.push(pKey, isBoolean ? "" : pValue);
-          }
+          attrs.push(pKey, isBoolean ? "" : pValue);
         }
       }
 
@@ -1294,6 +1294,7 @@ const innerRender = () => {
     }
 
     let referFiber = null;
+
     if (current.tagType !== FunctionComponent) {
       referFiber = current;
     } else if (isSkip) {
