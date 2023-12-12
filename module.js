@@ -625,7 +625,7 @@ class Fiber {
 
   index = -1;
   oldIndex = -1;
-  __refer = null;
+  preReferHost = null;
   __deletion = null;
   stateNode = null;
 
@@ -784,6 +784,7 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.__skip = false;
     fiber.__lastDirty = false;
 
+    // todo: 当为 HostFiber 时，若只有事件函数不相等时，可以不用标记 RenderForce
     if (
       !(fiber.renderFlag & RenderForce) &&
       !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
@@ -923,8 +924,8 @@ const beginWork = (returnFiber) => {
         fiber.flags &= ~MarkMoved;
         max--;
 
-        // first-fiber 不能跳过，否则更新 __refer 值逻辑向上不会执行
-        if (fiber !== returnFiber.child && isSkipFiber(fiber)) {
+        // 这里只考虑在 returnFiber 内部是否可以跳过，外部在考虑继承 returnFiber 的位移状态
+        if (isSkipFiber(fiber)) {
           if (
             !fiber.sibling ||
             (!(fiber.sibling.flags & (MarkMount | MarkMoved)) &&
@@ -1080,37 +1081,52 @@ const markPortal = (fiber, returnFiber) => {
   }
 };
 
-function* genFiberTree(returnFiber) {
-  returnFiber.__refer = null;
+const HostFiberQueue = [];
+const getPreHostFiber = () => {
+  if (!HostFiberQueue.length) {
+    return null;
+  }
+  return HostFiberQueue[HostFiberQueue.length - 1].preReferHostCursor;
+};
+const setPreHostFiber = (fiber) => {
+  if (fiber.tagType !== FunctionComponent && HostFiberQueue.length) {
+    HostFiberQueue[HostFiberQueue.length - 1].preReferHostCursor = fiber;
+  }
+};
 
+function* genFiberTree(returnFiber) {
   beginWork(returnFiber);
 
-  let isSkip = true;
-  let fiber = returnFiber.child;
+  const isContainer = isContainerFiber(returnFiber);
+  if (isContainer) {
+    returnFiber.preReferHostCursor = null;
+    HostFiberQueue.push(returnFiber);
+  }
 
+  let fiber = returnFiber.child;
   while (fiber) {
     fiber.oldIndex = fiber.index;
-    isSkip = false;
 
     if (
       returnFiber.tagType === FunctionComponent &&
       returnFiber.flags & MarkMoved
     ) {
       markMoved(fiber);
+      // 如果父组件已经位移了，则需更改自身的跳过逻辑。如：Portal
+      fiber.__skip = false;
     }
 
+    fiber.preReferHost = getPreHostFiber();
     if (fiber.__skip) {
-      fiber = fiber.sibling;
-      continue;
-    }
-
-    if (fiber.tagType === HostText) {
-      yield [fiber, true];
-    } else if (isSkipFiber(fiber)) {
-      yield [fiber, true];
+      // 跳过不处理
+    } else if (fiber.tagType === HostText) {
+      yield fiber;
+      // } else if (isSkipFiber(fiber)) {
+      //   yield fiber;
     } else {
       yield* genFiberTree(fiber);
     }
+    setPreHostFiber(fiber);
 
     if (fiber.__lastDirty) {
       break;
@@ -1119,7 +1135,10 @@ function* genFiberTree(returnFiber) {
     fiber = fiber.sibling;
   }
 
-  yield [returnFiber, isSkip];
+  if (isContainer) {
+    HostFiberQueue.pop();
+  }
+  yield returnFiber;
 }
 
 const placementFiber = (fiber) => {
@@ -1135,7 +1154,7 @@ const placementFiber = (fiber) => {
     return;
   }
 
-  const preHostFiber = fiber.__refer;
+  const preHostFiber = fiber.preReferHost;
 
   if (preHostFiber && isDescendantOf(preHostFiber, parentHostFiber)) {
     hostConfig.toAfter(
@@ -1226,39 +1245,6 @@ const commitRoot = () => {
   }
 };
 
-const findLastRefer = (returnFiber) => {
-  const queue = [returnFiber];
-  while (queue.length) {
-    const current = queue.pop();
-    if (current.tagType !== FunctionComponent) {
-      return current;
-    }
-
-    for (const fiber of walkChildFiber(current)) {
-      if (!isPortal(fiber)) {
-        queue.push(fiber);
-      }
-    }
-  }
-};
-
-const markPreHostRefer = (leafChild) => {
-  let current = leafChild;
-  const preHostFiber = leafChild.__refer;
-  while (
-    current.return &&
-    !current.return.__refer &&
-    current === current.return.child
-  ) {
-    current.return.__refer = preHostFiber;
-    current = current.return;
-
-    if (isPortal(current)) {
-      return;
-    }
-  }
-};
-
 const toCommit = () => {
   commitRoot();
   if (Fiber.scheduler.restoreDataFn) {
@@ -1274,41 +1260,8 @@ const innerRender = () => {
     return toCommit;
   }
 
-  const [current, isSkip] = obj.value;
-
+  const current = obj.value;
   finishedWork(current);
-
-  if (!isPortal(current)) {
-    const portalParent =
-      current.portalFlag & ReturnPortal
-        ? findParentFiber(current, isPortal)
-        : null;
-
-    if (!current.child || isSkip) {
-      if (!portalParent) {
-        current.__refer = Fiber.scheduler.preHostFiber;
-      } else {
-        current.__refer = portalParent.__preHostFiber;
-      }
-      markPreHostRefer(current);
-    }
-
-    let referFiber = null;
-
-    if (current.tagType !== FunctionComponent) {
-      referFiber = current;
-    } else if (isSkip) {
-      referFiber = findLastRefer(current);
-    }
-
-    if (referFiber) {
-      if (!portalParent) {
-        Fiber.scheduler.preHostFiber = referFiber;
-      } else {
-        portalParent.__preHostFiber = referFiber;
-      }
-    }
-  }
 
   if (current.flags) {
     Fiber.scheduler.MutationQueue.push(current);
