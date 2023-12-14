@@ -717,8 +717,6 @@
   const isPortal = (f) => f.portalFlag & SelfPortal;
   const isHostFiber = (f) => f.tagType === HostComponent;
   const isContainerFiber = (f) => isHostFiber(f) || isPortal(f);
-  const isDescendantOf = (fiber, returnFiber) =>
-    findParentFiber(fiber, (f) => f === returnFiber);
 
   const runUpdate = (fn) => fn();
   const batchRerender = () => {
@@ -864,6 +862,7 @@
     let indexCount = deletionMap.size ? [] : null;
     let j = 0;
     let lastDirtyFiber = null;
+    let lastHostFiber = null;
 
     const children = returnFiber.normalChildren;
     if (children !== null) {
@@ -871,8 +870,9 @@
 
       for (let index = 0; index < children.length; index++) {
         const element = children[index];
+        const isHostType = isString(element.type);
         const key =
-          (isString(element.type) ? element.type : element.type.name) +
+          (isHostType ? element.type : element.type.name) +
           "#" +
           (element.key != null ? element.key : index);
         const nodeKey = Fiber.genNodeKey(key, returnFiber.nodeKey);
@@ -913,6 +913,11 @@
           fiber.portalFlag |= SelfPortal;
         } else {
           fiber.portalFlag &= ~SelfPortal;
+
+          // 当不是 Portal 时记录 lastHostFiber
+          if (isHostType || fiber.stateNode) {
+            lastHostFiber = isHostType ? fiber : fiber.stateNode;
+          }
         }
 
         if (index === 0) {
@@ -923,6 +928,10 @@
 
         preFiber = fiber;
       }
+    }
+
+    if (returnFiber.tagType === FunctionComponent) {
+      returnFiber.stateNode = lastHostFiber;
     }
 
     // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
@@ -943,13 +952,7 @@
 
           // 这里只考虑在 returnFiber 内部是否可以跳过，外部在考虑继承 returnFiber 的位移状态
           if (isSkipFiber(fiber)) {
-            if (
-              !fiber.sibling ||
-              (!(fiber.sibling.flags & (MarkMount | MarkMoved)) &&
-                !isPortal(fiber.sibling))
-            ) {
-              fiber.__skip = true;
-            }
+            fiber.__skip = true;
           }
         }
 
@@ -1106,8 +1109,13 @@
     return HostFiberQueue[HostFiberQueue.length - 1].preReferHostCursor;
   };
   const setPreHostFiber = (fiber) => {
-    if (fiber.tagType !== FunctionComponent && HostFiberQueue.length) {
-      HostFiberQueue[HostFiberQueue.length - 1].preReferHostCursor = fiber;
+    if (HostFiberQueue.length) {
+      if (fiber.tagType !== FunctionComponent) {
+        HostFiberQueue[HostFiberQueue.length - 1].preReferHostCursor = fiber;
+      } else if (!isPortal(fiber) && fiber.stateNode) {
+        HostFiberQueue[HostFiberQueue.length - 1].preReferHostCursor =
+          fiber.stateNode;
+      }
     }
   };
 
@@ -1120,33 +1128,40 @@
       HostFiberQueue.push(returnFiber);
     }
 
+    let isReturnMoved =
+      returnFiber.tagType === FunctionComponent &&
+      returnFiber.flags & MarkMoved;
+
     let fiber = returnFiber.child;
+    let isLastSkip = false;
     while (fiber) {
       fiber.oldIndex = fiber.index;
 
-      if (
-        returnFiber.tagType === FunctionComponent &&
-        returnFiber.flags & MarkMoved
-      ) {
+      if (isReturnMoved) {
         markMoved(fiber);
         // 如果父组件已经位移了，则需更改自身的跳过逻辑。如：Portal
         fiber.__skip = false;
+        isLastSkip = false;
       }
 
       fiber.preReferHost = getPreHostFiber();
-      if (fiber.__skip) {
-        // 跳过不处理
-      } else if (fiber.tagType === HostText) {
-        yield fiber;
-        // } else if (isSkipFiber(fiber)) {
-        //   yield fiber;
-      } else {
-        yield* genFiberTree(fiber);
+
+      if (!isLastSkip) {
+        if (fiber.__skip) {
+          // 跳过不处理
+        } else if (fiber.tagType === HostText) {
+          yield fiber;
+        } else if (isSkipFiber(fiber)) {
+          yield fiber;
+        } else {
+          yield* genFiberTree(fiber);
+        }
       }
+
       setPreHostFiber(fiber);
 
       if (fiber.__lastDirty) {
-        break;
+        isLastSkip = true;
       }
 
       fiber = fiber.sibling;
@@ -1173,7 +1188,7 @@
 
     const preHostFiber = fiber.preReferHost;
 
-    if (preHostFiber && isDescendantOf(preHostFiber, parentHostFiber)) {
+    if (preHostFiber) {
       hostConfig.toAfter(
         fiber.stateNode,
         parentHostFiber.stateNode,
@@ -1198,6 +1213,7 @@
         if (f.tagType !== FunctionComponent) {
           hostConfig.removeChild(f.stateNode);
         } else {
+          f.stateNode = null;
           dispatchHook(f, "onUnMounted", true);
         }
 
