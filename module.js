@@ -311,10 +311,8 @@ const domHostConfig = {
     }
   },
   toFirst(child, container) {
-    let referenceNode;
-
     if (container instanceof VNode) {
-      referenceNode = container.startNode.nextSibling;
+      const referenceNode = container.startNode.nextSibling;
       const parentNode = container.endNode.parentNode;
 
       if (child instanceof VNode) {
@@ -323,11 +321,10 @@ const domHostConfig = {
         parentNode.insertBefore(child, referenceNode);
       }
     } else {
-      referenceNode = container.firstChild;
       if (child instanceof VNode) {
-        container.insertBefore(child.toFragment(), referenceNode);
+        container.prepend(child.toFragment());
       } else {
-        container.insertBefore(child, referenceNode);
+        container.prepend(child);
       }
     }
   },
@@ -835,7 +832,7 @@ const incomingQueue = (fiber) => {
       restoreDataFn: hostConfig.genRestoreDataFn(),
     };
 
-    mainQueueMacrotask(innerRender.bind(null, renderContext));
+    return innerRender.bind(null, renderContext);
   }
 };
 
