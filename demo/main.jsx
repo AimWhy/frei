@@ -82,7 +82,7 @@ function App(props) {
         点击事件
       </button>
 
-      <Fragment key="lkjsdflkj" __target={state ? document.body : void 0}>
+      <Fragment key="小羽毛key" __target={state ? document.body : void 0}>
         <div>
           <div>小羽毛是个</div>
           <div>机灵鬼</div>
