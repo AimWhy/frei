@@ -86,21 +86,27 @@
 
       const startTime = Date.now();
       const timeoutTime = startTime + frameYieldMs;
-      const didTimeout = () => Date.now() > timeoutTime;
+      let throttleTimes = 0;
 
       try {
-        while (scheduledQueue.length > 0 && !didTimeout()) {
+        while (
+          scheduledQueue.length > 0 &&
+          (throttleTimes !== 0 || Date.now() <= timeoutTime)
+        ) {
           const work = scheduledQueue[scheduledQueue.length - 1];
 
           // 执行之前记录一下 len
           const next = work();
           // 执行之后再记录一下 len, 是否有添加？
 
-          if (isFunction(next)) {
+          if (next === true) {
+            // 不丢弃 (不删除尾部work, 下次执行还是它)
+          } else if (isFunction(next)) {
             scheduledQueue[scheduledQueue.length - 1] = next;
           } else {
             scheduledQueue.length -= 1;
           }
+          throttleTimes = (throttleTimes + 1) % 20;
         }
       } catch (e) {
         console.error(e);
@@ -326,10 +332,8 @@
       }
     },
     toFirst(child, container) {
-      let referenceNode;
-
       if (container instanceof VNode) {
-        referenceNode = container.startNode.nextSibling;
+        const referenceNode = container.startNode.nextSibling;
         const parentNode = container.endNode.parentNode;
 
         if (child instanceof VNode) {
@@ -338,11 +342,10 @@
           parentNode.insertBefore(child, referenceNode);
         }
       } else {
-        referenceNode = container.firstChild;
         if (child instanceof VNode) {
-          container.insertBefore(child.toFragment(), referenceNode);
+          container.prepend(child.toFragment());
         } else {
-          container.insertBefore(child, referenceNode);
+          container.prepend(child);
         }
       }
     },
@@ -751,14 +754,16 @@
   const SelfPortal = 1 << 0;
   const ReturnPortal = 1 << 1;
 
+  const EmptyProps = {};
+
   class Fiber {
     key = null;
     ref = null;
     type = null;
     tagType = null;
     nodeKey = "";
-    pendingProps = {};
-    memoizedProps = {};
+    pendingProps = EmptyProps;
+    memoizedProps = EmptyProps;
     memoizedState = null;
     __StateIndex = 0;
     updateQueue = null;
@@ -852,7 +857,7 @@
         restoreDataFn: hostConfig.genRestoreDataFn(),
       };
 
-      mainQueueMacrotask(innerRender.bind(null, renderContext));
+      return innerRender.bind(null, renderContext);
     }
   };
 
@@ -1059,13 +1064,12 @@
     }
   };
 
-  const skipKeySet = new Set();
   const finishedWork = (fiber) => {
     if (isSkipFiber(fiber)) {
       fiber.memoizedProps = fiber.pendingProps;
     } else {
-      const oldProps = fiber.memoizedProps || {};
-      const newProps = fiber.pendingProps || {};
+      const oldProps = fiber.memoizedProps;
+      const newProps = fiber.pendingProps;
 
       let isMarkUpdate = false;
 
@@ -1099,6 +1103,7 @@
         }
       } else if (fiber.tagType === HostComponent) {
         const attrs = [];
+        const skipKeySet = new Set();
 
         for (const pKey in newProps) {
           if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
@@ -1153,8 +1158,6 @@
             attrs.push(pKey, void 0);
           }
         }
-
-        skipKeySet.clear();
 
         fiber.memoizedState = attrs;
         if (fiber.memoizedState.length) {
@@ -1332,7 +1335,7 @@
       current.renderFlag = false;
     }
 
-    return innerRender.bind(null, renderContext);
+    return true;
   };
 
   const createRoot = (container) => {
