@@ -6,7 +6,7 @@ export const jsx = (type, props = {}, key = null) => ({
 
 export const Fragment = (props) => props.children;
 
-const noop = () => {};
+const noop = (_) => _;
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => typeof val === "string";
 const isFunction = (val) => typeof val === "function";
@@ -73,9 +73,9 @@ const genQueueMacrotask = (macrotaskName) => {
       return;
     }
 
+    let throttleTimes = 0;
     const startTime = Date.now();
     const timeoutTime = startTime + frameYieldMs;
-    let throttleTimes = 0;
 
     try {
       while (
@@ -84,9 +84,8 @@ const genQueueMacrotask = (macrotaskName) => {
       ) {
         const work = scheduledQueue[scheduledQueue.length - 1];
 
-        // 执行之前记录一下 len
+        // 执行前记录一下 len, 执行完后再记录一下 len, 判断是否有添加
         const next = work();
-        // 执行之后再记录一下 len, 是否有添加？
 
         if (next === true) {
           // 不丢弃 (不删除尾部work, 下次执行还是它)
@@ -95,7 +94,7 @@ const genQueueMacrotask = (macrotaskName) => {
         } else {
           scheduledQueue.length -= 1;
         }
-        throttleTimes = (throttleTimes + 1) % 20;
+        throttleTimes = (throttleTimes + 1) % 40;
       }
     } catch (e) {
       console.error(e);
@@ -121,10 +120,9 @@ const genQueueMacrotask = (macrotaskName) => {
 };
 
 const mainQueueMacrotask = genQueueMacrotask("main-macro-task");
-
 const effectQueueMacrotask = genQueueMacrotask("effect-macro-task");
 
-const elementPropsKey = "__fiber";
+const elementPropsKey = Symbol("__fiber");
 
 /* #region 事件相关 */
 
@@ -287,11 +285,7 @@ class ObjectPool {
   get _freeCount() {
     return this._poolArray.length - this._freeIndex;
   }
-  constructor(
-    constructorFunction,
-    resetFunction = (obj) => obj,
-    initialSize = 1000
-  ) {
+  constructor(constructorFunction, resetFunction = noop, initialSize = 1000) {
     this._poolArray = [];
     this._freeIndex = 0;
     this.resetFunction = resetFunction;
@@ -345,7 +339,7 @@ const DomTextPool = new ObjectPool(() => {
 const DomFragmentPool = new ObjectPool(
   () => document.createDocumentFragment(),
   (fragment) => {
-    if (fragment.childNodes.length) {
+    if (fragment.hasChildNodes()) {
       while (fragment.firstChild) {
         fragment.removeChild(fragment.firstChild);
       }
@@ -377,16 +371,16 @@ const domHostConfig = {
     return DomFragmentPool.getElement();
   },
   toLast(child, container) {
-    if (container instanceof VNode) {
+    if (isVNode(container)) {
       const parentNode = container.endNode.parentNode;
 
-      if (child instanceof VNode) {
+      if (isVNode(child)) {
         parentNode.insertBefore(child.toFragment(), container.endNode);
       } else {
         parentNode.insertBefore(child, container.endNode);
       }
     } else {
-      if (child instanceof VNode) {
+      if (isVNode(child)) {
         container.appendChild(child.toFragment());
       } else {
         container.appendChild(child);
@@ -394,17 +388,17 @@ const domHostConfig = {
     }
   },
   toFirst(child, container) {
-    if (container instanceof VNode) {
+    if (isVNode(container)) {
       const referenceNode = container.startNode.nextSibling;
       const parentNode = container.endNode.parentNode;
 
-      if (child instanceof VNode) {
+      if (isVNode(child)) {
         parentNode.insertBefore(child.toFragment(), referenceNode);
       } else {
         parentNode.insertBefore(child, referenceNode);
       }
     } else {
-      if (child instanceof VNode) {
+      if (isVNode(child)) {
         container.prepend(child.toFragment());
       } else {
         container.prepend(child);
@@ -412,21 +406,20 @@ const domHostConfig = {
     }
   },
   toAfter(child, container, reference) {
-    let referenceNode =
-      reference instanceof VNode
-        ? reference.endNode.nextSibling
-        : reference.nextSibling;
+    let referenceNode = isVNode(reference)
+      ? reference.endNode.nextSibling
+      : reference.nextSibling;
 
-    if (container instanceof VNode) {
+    if (isVNode(container)) {
       const parentNode = container.endNode.parentNode;
 
-      if (child instanceof VNode) {
+      if (isVNode(child)) {
         parentNode.insertBefore(child.toFragment(), referenceNode);
       } else {
         parentNode.insertBefore(child, referenceNode);
       }
     } else {
-      if (child instanceof VNode) {
+      if (isVNode(child)) {
         container.insertBefore(child.toFragment(), referenceNode);
       } else {
         container.insertBefore(child, referenceNode);
@@ -434,7 +427,7 @@ const domHostConfig = {
     }
   },
   removeChild(child) {
-    if (child instanceof VNode) {
+    if (isVNode(child)) {
       const startNode = child.startNode;
       const endNode = child.endNode;
       while (startNode.nextSibling !== endNode) {
@@ -509,19 +502,19 @@ const domHostConfig = {
   },
 };
 
+const isVNode = (o) => o.constructor === VNode;
+
 class VNode {
   constructor(key) {
     this.fg = domHostConfig.createFragment();
     this.startNode = domHostConfig.createComment(`start:${key}`);
     this.endNode = domHostConfig.createComment(`end:${key}`);
-    this.startNode.end = this.endNode;
-    this.endNode.start = this.startNode;
     this.fg.appendChild(this.startNode);
     this.fg.appendChild(this.endNode);
   }
   toFragment() {
-    // move 时
-    if (!this.fg.childNodes.length) {
+    // 非首次渲染时
+    if (!this.fg.hasChildNodes()) {
       let current = this.startNode;
       while (current) {
         const nextSibling = current.nextSibling;
@@ -745,75 +738,65 @@ const toElement = (item) => {
 };
 
 const NoFlags = 0 << 0;
-const MarkMount = 1 << 0;
-const MarkMoved = 1 << 1;
-const ChildDeletion = 1 << 2;
-const MarkUpdate = 1 << 3;
-const MarkRef = 1 << 4;
-const UnMount = 1 << 5;
+const MountFlag = 1 << 0;
+const MovedFlag = 1 << 1;
+const ChildDeletionFlag = 1 << 2;
+const UpdateFlag = 1 << 3;
+const RefFlag = 1 << 4;
+const UnMountFlag = 1 << 5;
 
 const markUnMount = (fiber) => {
-  fiber.flags |= UnMount;
+  fiber.flags |= UnMountFlag;
 };
-const isMarkUnMount = (fiber) => {
-  return fiber.flags & UnMount;
+const unMarkUnMount = (fiber) => {
+  fiber.flags &= ~UnMountFlag;
 };
+const isMarkUnMount = (fiber) => fiber.flags & UnMountFlag;
 const markUpdate = (fiber) => {
-  fiber.flags |= MarkUpdate;
+  fiber.flags |= UpdateFlag;
 };
 const unMarkUpdate = (fiber) => {
-  fiber.flags &= ~MarkUpdate;
+  fiber.flags &= ~UpdateFlag;
 };
-const isMarkUpdate = (fiber) => {
-  return fiber.flags & MarkUpdate;
-};
+const isMarkUpdate = (fiber) => fiber.flags & UpdateFlag;
 const markMount = (fiber, preFiber) => {
-  fiber.flags |= MarkMount;
+  fiber.flags |= MountFlag;
   fiber.preReferFiber = preFiber;
 };
 const unMarkMount = (fiber) => {
-  fiber.flags &= ~MarkMount;
+  fiber.flags &= ~MountFlag;
   fiber.preReferFiber = null;
 };
-const isMarkMount = (fiber) => {
-  return fiber.flags & MarkMount;
-};
+const isMarkMount = (fiber) => fiber.flags & MountFlag;
 const markMoved = (fiber, preFiber) => {
-  fiber.flags |= MarkMoved;
+  fiber.flags |= MovedFlag;
   fiber.preReferFiber = preFiber;
 };
 const unMarkMoved = (fiber) => {
-  fiber.flags &= ~MarkMoved;
+  fiber.flags &= ~MovedFlag;
   fiber.preReferFiber = null;
 };
-const isMarkMoved = (fiber) => {
-  return fiber.flags & MarkMoved;
-};
+const isMarkMoved = (fiber) => fiber.flags & MovedFlag;
 const markRef = (fiber) => {
-  fiber.flags |= MarkRef;
+  fiber.flags |= RefFlag;
 };
 const unMarkRef = (fiber) => {
-  fiber.flags &= ~MarkRef;
+  fiber.flags &= ~RefFlag;
 };
-const isMarkRef = (fiber) => {
-  return fiber.flags & MarkRef;
-};
+const isMarkRef = (fiber) => fiber.flags & RefFlag;
 const markChildDeletion = (fiber) => {
-  fiber.flags |= ChildDeletion;
+  fiber.flags |= ChildDeletionFlag;
 };
 const unMarkChildDeletion = (fiber) => {
-  fiber.flags &= ~ChildDeletion;
+  fiber.flags &= ~ChildDeletionFlag;
 };
-const isMarkChildDeletion = (fiber) => {
-  return fiber.flags & ChildDeletion;
-};
+const isMarkChildDeletion = (fiber) => fiber.flags & ChildDeletionFlag;
 
 const HostText = Symbol("HostText");
 const HostComponent = Symbol("HostComponent");
 const FunctionComponent = Symbol("FunctionComponent");
 
 const EmptyProps = {};
-
 class Fiber {
   key = null;
   ref = null;
@@ -831,14 +814,15 @@ class Fiber {
   preReferHost = null;
   __deletion = null;
   stateNode = null;
+  preReferFiber = null;
 
   child = null;
   return = null;
   sibling = null;
 
-  flags = MarkMount;
-  portalFlag = false;
-  renderFlag = true;
+  flags = MountFlag;
+  isPortal = false;
+  isRerender = true;
 
   get normalChildren() {
     if (this.tagType === HostText) {
@@ -904,7 +888,7 @@ const incomingQueue = (fiber) => {
       fiber.updateQueue.length = 0;
     }
 
-    fiber.renderFlag = true;
+    fiber.isRerender = true;
 
     const renderContext = {
       MutationQueue: [],
@@ -945,12 +929,12 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.__lastDirty = false;
     fiber.oldIndex = fiber.index;
 
-    // todo 优化: 当为 HostFiber 时，若只有事件函数不相等时，可以不用标记
+    // 可优化: 当为 HostFiber 时，若只有事件函数不相等时，可以不用标记
     if (
-      !fiber.renderFlag &&
+      !fiber.isRerender &&
       !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
     ) {
-      fiber.renderFlag = true;
+      fiber.isRerender = true;
     }
   } else {
     fiber = new Fiber(element, key, nodeKey);
@@ -984,10 +968,10 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
   return i;
 };
 
-const isSkipFiber = (f) => !f.flags && !f.renderFlag;
+const isSkipFiber = (f) => !f.isRerender && f.flags === NoFlags;
 
 const beginWork = (returnFiber) => {
-  if (!returnFiber.renderFlag) {
+  if (!returnFiber.isRerender) {
     return;
   }
 
@@ -1057,13 +1041,14 @@ const beginWork = (returnFiber) => {
       }
 
       if (fiber.pendingProps.__target) {
-        fiber.portalFlag = true;
+        fiber.isPortal = true;
       } else {
-        fiber.portalFlag = false;
+        fiber.isPortal = false;
         noPortalPreFiber = fiber;
       }
 
       if (index === 0) {
+        lastDirtyFiber = fiber;
         returnFiber.child = fiber;
       } else {
         preFiber.sibling = fiber;
@@ -1081,7 +1066,6 @@ const beginWork = (returnFiber) => {
     for (let i = reuseKeyList.length - 1; i > -1; i--) {
       const fiberKey = reuseKeyList[i];
       const fiber = deletionMap.get(fiberKey);
-      const isSkip = isSkipFiber(fiber);
 
       // 位置复用
       if (max > 0 && indexCount[i] === max) {
@@ -1089,15 +1073,15 @@ const beginWork = (returnFiber) => {
         // 属于递增子序列里，取消标记位移
         unMarkMoved(fiber);
         max--;
-
-        // 这里只考虑在 returnFiber 内部是否可以跳过
-        if (isSkip) {
-          fiber.__skip = true;
-        }
       }
 
-      if (!isSkip && (!lastDirtyFiber || fiber.index >= lastDirtyFiber.index)) {
-        lastDirtyFiber = fiber;
+      // 这里只考虑在 returnFiber 内部是否可以跳过
+      if (isSkipFiber(fiber)) {
+        fiber.__skip = true;
+      } else {
+        if (!lastDirtyFiber || fiber.index >= lastDirtyFiber.index) {
+          lastDirtyFiber = fiber;
+        }
       }
     }
   }
@@ -1123,13 +1107,13 @@ const finishedWork = (fiber) => {
     const oldProps = fiber.memoizedProps;
     const newProps = fiber.pendingProps;
 
-    let isMarkUpdate = false;
+    let isNeedMarkUpdate = false;
 
     if (oldProps.ref !== newProps.ref) {
       const oldRef = oldProps.ref;
       const newRef = newProps.ref;
 
-      isMarkUpdate = true;
+      isNeedMarkUpdate = true;
 
       fiber.ref = (instance) => {
         if (isFunction(oldRef)) {
@@ -1151,7 +1135,7 @@ const finishedWork = (fiber) => {
     if (fiber.tagType === HostText) {
       if (!oldProps || newProps.content !== oldProps.content) {
         fiber.memoizedState = newProps.content;
-        isMarkUpdate = true;
+        isNeedMarkUpdate = true;
       }
     } else if (fiber.tagType === HostComponent) {
       const attrs = [];
@@ -1213,15 +1197,15 @@ const finishedWork = (fiber) => {
 
       fiber.memoizedState = attrs;
       if (fiber.memoizedState.length) {
-        isMarkUpdate = true;
+        isNeedMarkUpdate = true;
       }
     } else {
-      if (!isMarkMount(fiber) && fiber.renderFlag) {
-        isMarkUpdate = true;
+      if (!isMarkMount(fiber) && fiber.isRerender) {
+        isNeedMarkUpdate = true;
       }
     }
 
-    if (isMarkUpdate) {
+    if (isNeedMarkUpdate) {
       markUpdate(fiber);
     }
   }
@@ -1263,7 +1247,7 @@ const placementFiber = (fiber, isMount) => {
   }
 
   // 它是一个 portal: 用带有 __target 指向的 stateNode
-  if (fiber.portalFlag) {
+  if (fiber.isPortal) {
     hostConfig.toLast(fiber.stateNode, fiber.pendingProps.__target);
     return;
   }
@@ -1357,7 +1341,7 @@ const commitRoot = (renderContext) => {
       unMarkRef(fiber);
     }
 
-    fiber.renderFlag = false;
+    fiber.isRerender = false;
     fiber.flags = NoFlags;
   }
 };
@@ -1371,12 +1355,11 @@ const toCommit = (renderContext) => {
 
 const innerRender = (renderContext) => {
   const obj = renderContext.gen.next();
+  const current = obj.value;
 
   if (obj.done) {
     return toCommit.bind(null, renderContext);
   }
-
-  const current = obj.value;
 
   finishedWork(current);
 
@@ -1384,7 +1367,7 @@ const innerRender = (renderContext) => {
     renderContext.MutationQueue.push(current);
   } else {
     current.flags = NoFlags;
-    current.renderFlag = false;
+    current.isRerender = false;
   }
 
   return true;
