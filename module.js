@@ -812,10 +812,6 @@ const HostText = Symbol("HostText");
 const HostComponent = Symbol("HostComponent");
 const FunctionComponent = Symbol("FunctionComponent");
 
-const NoPortal = 0 << 0;
-const SelfPortal = 1 << 0;
-const ReturnPortal = 1 << 1;
-
 const EmptyProps = {};
 
 class Fiber {
@@ -841,7 +837,7 @@ class Fiber {
   sibling = null;
 
   flags = MarkMount;
-  portalFlag = NoPortal;
+  portalFlag = false;
   renderFlag = true;
 
   get normalChildren() {
@@ -872,6 +868,8 @@ class Fiber {
     if (this.type === "text") {
       this.tagType = HostText;
       this.stateNode = hostConfig.createTextInstance();
+      hostConfig.commitTextUpdate(this.stateNode, this.pendingProps.content);
+      this.memoizedProps = this.pendingProps;
     } else if (isString(this.type)) {
       this.tagType = HostComponent;
       this.stateNode = hostConfig.createInstance(this.type);
@@ -897,8 +895,6 @@ Fiber.initLifecycle = (fiber) => {
   fiber.onBeforeMove = new Set();
   fiber.onMoved = new Set();
 };
-
-const isPortal = (f) => f.portalFlag & SelfPortal;
 
 const runUpdate = (fn) => fn();
 const incomingQueue = (fiber) => {
@@ -939,7 +935,7 @@ function* walkFiberTree(returnFiber, fn = noop) {
 }
 
 const createFiber = (element, key, nodeKey, deletionMap) => {
-  let fiber = deletionMap.size ? deletionMap.get(nodeKey) : null;
+  let fiber = deletionMap ? deletionMap.get(nodeKey) : null;
 
   if (fiber) {
     fiber.pendingProps = element.props;
@@ -949,7 +945,7 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.__lastDirty = false;
     fiber.oldIndex = fiber.index;
 
-    // todo: 当为 HostFiber 时，若只有事件函数不相等时，可以不用标记
+    // todo 优化: 当为 HostFiber 时，若只有事件函数不相等时，可以不用标记
     if (
       !fiber.renderFlag &&
       !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
@@ -988,8 +984,6 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
   return i;
 };
 
-const EmptyMap = new Map();
-
 const isSkipFiber = (f) => !f.flags && !f.renderFlag;
 
 const beginWork = (returnFiber) => {
@@ -997,9 +991,11 @@ const beginWork = (returnFiber) => {
     return;
   }
 
-  let deletionMap = EmptyMap;
-  if (!isMarkMount(returnFiber)) {
+  let deletionMap = null;
+  let hasOldChildFiber = false;
+  if (!isMarkMount(returnFiber) && returnFiber.child) {
     deletionMap = new Map();
+    hasOldChildFiber = true;
     for (const oldFiber of walkChildFiber(returnFiber)) {
       deletionMap.set(oldFiber.nodeKey, oldFiber);
     }
@@ -1007,14 +1003,14 @@ const beginWork = (returnFiber) => {
 
   returnFiber.child = null;
 
-  const increasing = deletionMap.size ? [] : null;
-  const deletionKey = deletionMap.size ? [] : null;
-  let indexCount = deletionMap.size ? [] : null;
+  const reuseKeyList = hasOldChildFiber ? [] : null;
+  const increasing = hasOldChildFiber ? [] : null;
+  const indexCount = hasOldChildFiber ? [] : null;
   let j = 0;
   let lastDirtyFiber = null;
 
   const children = returnFiber.normalChildren;
-  if (children !== null) {
+  if (children != null) {
     let preFiber = null;
     let noPortalPreFiber = null;
 
@@ -1033,10 +1029,11 @@ const beginWork = (returnFiber) => {
       if (fiber.oldIndex === -1) {
         markMount(fiber, noPortalPreFiber);
         lastDirtyFiber = fiber;
-      } else {
+      } else if (hasOldChildFiber) {
         if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
           markMoved(fiber, noPortalPreFiber);
-          deletionKey.push(nodeKey);
+          // 记录复用的 nodeKey，循环结束后再从 deletionMap 中移除
+          reuseKeyList.push(nodeKey);
 
           const i = findIndex(increasing, fiber, deletionMap);
           if (i + 1 > increasing.length) {
@@ -1054,15 +1051,15 @@ const beginWork = (returnFiber) => {
             lastDirtyFiber = fiber;
           }
 
+          // 从待删除 deletionMap 中移除此 nodeKey
           deletionMap.delete(nodeKey);
         }
       }
 
-      markPortal(fiber, returnFiber);
       if (fiber.pendingProps.__target) {
-        fiber.portalFlag |= SelfPortal;
+        fiber.portalFlag = true;
       } else {
-        fiber.portalFlag &= ~SelfPortal;
+        fiber.portalFlag = false;
         noPortalPreFiber = fiber;
       }
 
@@ -1078,12 +1075,13 @@ const beginWork = (returnFiber) => {
 
   // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
   // 所以需要再走一遍构建 increasing 的逻辑
-  if (indexCount) {
+  if (hasOldChildFiber) {
     let max = Math.max(...indexCount);
 
-    for (let i = deletionKey.length - 1; i > -1; i--) {
-      const fiberKey = deletionKey[i];
+    for (let i = reuseKeyList.length - 1; i > -1; i--) {
+      const fiberKey = reuseKeyList[i];
       const fiber = deletionMap.get(fiberKey);
+      const isSkip = isSkipFiber(fiber);
 
       // 位置复用
       if (max > 0 && indexCount[i] === max) {
@@ -1092,16 +1090,13 @@ const beginWork = (returnFiber) => {
         unMarkMoved(fiber);
         max--;
 
-        // 这里只考虑在 returnFiber 内部是否可以跳过，外部在考虑继承 returnFiber 的位移状态
-        if (isSkipFiber(fiber)) {
+        // 这里只考虑在 returnFiber 内部是否可以跳过
+        if (isSkip) {
           fiber.__skip = true;
         }
       }
 
-      if (
-        !lastDirtyFiber ||
-        (fiber.index >= lastDirtyFiber.index && !isSkipFiber(fiber))
-      ) {
+      if (!isSkip && (!lastDirtyFiber || fiber.index >= lastDirtyFiber.index)) {
         lastDirtyFiber = fiber;
       }
     }
@@ -1111,22 +1106,20 @@ const beginWork = (returnFiber) => {
     lastDirtyFiber.__lastDirty = true;
   }
 
-  if (deletionKey) {
-    for (const k of deletionKey) {
+  if (hasOldChildFiber) {
+    for (const k of reuseKeyList) {
       deletionMap.delete(k);
     }
-  }
 
-  if (deletionMap.size) {
-    returnFiber.__deletion = deletionMap;
-    markChildDeletion(returnFiber);
+    if (deletionMap.size) {
+      returnFiber.__deletion = deletionMap;
+      markChildDeletion(returnFiber);
+    }
   }
 };
 
 const finishedWork = (fiber) => {
-  if (isSkipFiber(fiber)) {
-    fiber.memoizedProps = fiber.pendingProps;
-  } else {
+  if (!isSkipFiber(fiber)) {
     const oldProps = fiber.memoizedProps;
     const newProps = fiber.pendingProps;
 
@@ -1231,14 +1224,9 @@ const finishedWork = (fiber) => {
     if (isMarkUpdate) {
       markUpdate(fiber);
     }
-    fiber.memoizedProps = fiber.pendingProps;
   }
-};
 
-const markPortal = (fiber, returnFiber) => {
-  if (returnFiber.portalFlag) {
-    fiber.portalFlag |= ReturnPortal;
-  }
+  fiber.memoizedProps = fiber.pendingProps;
 };
 
 function* genFiberTree(returnFiber) {
@@ -1275,7 +1263,7 @@ const placementFiber = (fiber, isMount) => {
   }
 
   // 它是一个 portal: 用带有 __target 指向的 stateNode
-  if (isPortal(fiber)) {
+  if (fiber.portalFlag) {
     hostConfig.toLast(fiber.stateNode, fiber.pendingProps.__target);
     return;
   }
@@ -1346,8 +1334,6 @@ const commitRoot = (renderContext) => {
       if (!isHostFiber) {
         dispatchHook(fiber, "onMounted", true);
         dispatchHook(fiber, "onUpdated", true);
-      } else if (fiber.tagType === HostText) {
-        updateHostFiber(fiber);
       }
       unMarkMount(fiber);
     }
@@ -1356,7 +1342,6 @@ const commitRoot = (renderContext) => {
       placementFiber(fiber, false);
 
       if (!isHostFiber) {
-        // todo 移动所有包含的子dom节点
         dispatchHook(fiber, "onBeforeMove");
         dispatchHook(fiber, "onMoved", true);
       }
@@ -1392,6 +1377,7 @@ const innerRender = (renderContext) => {
   }
 
   const current = obj.value;
+
   finishedWork(current);
 
   if (current.flags) {
@@ -1419,8 +1405,7 @@ export const createRoot = (container) => {
           props: { children: element },
         },
         key,
-        key,
-        EmptyMap
+        key
       );
 
       rootFiber.stateNode = container;
