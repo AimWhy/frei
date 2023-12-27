@@ -279,6 +279,81 @@ const setStyle = (style, name, val) => {
   }
 };
 
+// Object Pool
+const INCREASE_PERCENT = 40;
+const MINIMUM_PERCENT_FREE = 10;
+const NULL_ELEMENT = null;
+class ObjectPool {
+  get _freeCount() {
+    return this._poolArray.length - this._freeIndex;
+  }
+  constructor(
+    constructorFunction,
+    resetFunction = (obj) => obj,
+    initialSize = 1000
+  ) {
+    this._poolArray = [];
+    this._freeIndex = 0;
+    this.resetFunction = resetFunction;
+    this.constructorFunction = constructorFunction;
+
+    for (let i = 0; i < initialSize; i++) {
+      this.createElement();
+    }
+  }
+  createElement() {
+    this._poolArray.push(this.resetFunction(this.constructorFunction()));
+  }
+  increasePoolSize() {
+    const increaseSize = Math.round(
+      (INCREASE_PERCENT * this._poolArray.length) / 100
+    );
+    for (let i = 0; i < increaseSize; i++) {
+      this.createElement();
+    }
+  }
+  getElement() {
+    if (
+      this._freeCount / this._poolArray.length <=
+      MINIMUM_PERCENT_FREE / 100
+    ) {
+      this.increasePoolSize();
+    }
+    const freeElement = this._poolArray[this._freeIndex];
+    this._poolArray[this._freeIndex++] = NULL_ELEMENT;
+    return freeElement;
+  }
+  releaseElement(element) {
+    this._poolArray[--this._freeIndex] = element;
+    this.resetFunction(element);
+  }
+  get size() {
+    return this._poolArray.length;
+  }
+}
+
+const DomCommentPool = new ObjectPool(() => {
+  const result = document.createComment("");
+  return result;
+});
+
+const DomTextPool = new ObjectPool(() => {
+  const result = document.createTextNode("");
+  return result;
+});
+
+const DomFragmentPool = new ObjectPool(
+  () => document.createDocumentFragment(),
+  (fragment) => {
+    if (fragment.childNodes.length) {
+      while (fragment.firstChild) {
+        fragment.removeChild(fragment.firstChild);
+      }
+    }
+    return fragment;
+  }
+);
+
 const domHostConfig = {
   attrMap: {
     className: "class",
@@ -291,13 +366,15 @@ const domHostConfig = {
     return document.createElement(type);
   },
   createComment(data) {
-    return document.createComment(data);
+    const result = DomCommentPool.getElement();
+    result.data = data;
+    return result;
   },
-  createTextInstance(content) {
-    return document.createTextNode(content);
+  createTextInstance() {
+    return DomTextPool.getElement();
   },
   createFragment() {
-    return document.createDocumentFragment();
+    return DomFragmentPool.getElement();
   },
   toLast(child, container) {
     if (container instanceof VNode) {
@@ -777,7 +854,7 @@ class Fiber {
         ? this.pendingProps.children
         : genComponentInnerElement(this);
 
-    if (tempChildren === void 0) {
+    if (tempChildren == void 0) {
       return null;
     } else {
       return isArray(tempChildren)
@@ -794,8 +871,7 @@ class Fiber {
 
     if (this.type === "text") {
       this.tagType = HostText;
-      this.memoizedProps = this.pendingProps;
-      this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
+      this.stateNode = hostConfig.createTextInstance();
     } else if (isString(this.type)) {
       this.tagType = HostComponent;
       this.stateNode = hostConfig.createInstance(this.type);
@@ -1232,6 +1308,11 @@ const childDeletionFiber = (returnFiber) => {
 
       if (f.tagType === FunctionComponent) {
         dispatchHook(f, "onUnMounted", true);
+        DomFragmentPool.releaseElement(f.stateNode.fg);
+        DomCommentPool.releaseElement(f.stateNode.startNode);
+        DomCommentPool.releaseElement(f.stateNode.endNode);
+      } else if (f.tagType === HostText) {
+        DomTextPool.releaseElement(f.stateNode);
       }
 
       f.ref && f.ref(null);
@@ -1265,6 +1346,8 @@ const commitRoot = (renderContext) => {
       if (!isHostFiber) {
         dispatchHook(fiber, "onMounted", true);
         dispatchHook(fiber, "onUpdated", true);
+      } else if (fiber.tagType === HostText) {
+        updateHostFiber(fiber);
       }
       unMarkMount(fiber);
     }
