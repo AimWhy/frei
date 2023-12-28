@@ -277,77 +277,6 @@ const setStyle = (style, name, val) => {
   }
 };
 
-// Object Pool
-const INCREASE_PERCENT = 40;
-const MINIMUM_PERCENT_FREE = 10;
-const NULL_ELEMENT = null;
-class ObjectPool {
-  get _freeCount() {
-    return this._poolArray.length - this._freeIndex;
-  }
-  constructor(constructorFunction, resetFunction = noop, initialSize = 1000) {
-    this._poolArray = [];
-    this._freeIndex = 0;
-    this.resetFunction = resetFunction;
-    this.constructorFunction = constructorFunction;
-
-    for (let i = 0; i < initialSize; i++) {
-      this.createElement();
-    }
-  }
-  createElement() {
-    this._poolArray.push(this.resetFunction(this.constructorFunction()));
-  }
-  increasePoolSize() {
-    const increaseSize = Math.round(
-      (INCREASE_PERCENT * this._poolArray.length) / 100
-    );
-    for (let i = 0; i < increaseSize; i++) {
-      this.createElement();
-    }
-  }
-  getElement() {
-    if (
-      this._freeCount / this._poolArray.length <=
-      MINIMUM_PERCENT_FREE / 100
-    ) {
-      this.increasePoolSize();
-    }
-    const freeElement = this._poolArray[this._freeIndex];
-    this._poolArray[this._freeIndex++] = NULL_ELEMENT;
-    return freeElement;
-  }
-  releaseElement(element) {
-    this._poolArray[--this._freeIndex] = element;
-    this.resetFunction(element);
-  }
-  get size() {
-    return this._poolArray.length;
-  }
-}
-
-const DomCommentPool = new ObjectPool(() => {
-  const result = document.createComment("");
-  return result;
-});
-
-const DomTextPool = new ObjectPool(() => {
-  const result = document.createTextNode("");
-  return result;
-});
-
-const DomFragmentPool = new ObjectPool(
-  () => document.createDocumentFragment(),
-  (fragment) => {
-    if (fragment.hasChildNodes()) {
-      while (fragment.firstChild) {
-        fragment.removeChild(fragment.firstChild);
-      }
-    }
-    return fragment;
-  }
-);
-
 const domHostConfig = {
   attrMap: {
     className: "class",
@@ -359,16 +288,14 @@ const domHostConfig = {
   createInstance(type) {
     return document.createElement(type);
   },
-  createComment(data) {
-    const result = DomCommentPool.getElement();
-    result.data = data;
-    return result;
+  createComment(comment) {
+    return document.createComment(comment);
   },
-  createTextInstance() {
-    return DomTextPool.getElement();
+  createTextInstance(text) {
+    return document.createTextNode(text);
   },
   createFragment() {
-    return DomFragmentPool.getElement();
+    return document.createDocumentFragment();
   },
   toLast(child, container) {
     if (isVNode(container)) {
@@ -443,31 +370,32 @@ const domHostConfig = {
   commitTextUpdate(node, content) {
     node.nodeValue = content;
   },
-  commitInstanceUpdate(node, attrs) {
-    for (let i = 0; i < attrs.length; i += 2) {
-      const pKey = attrs[i];
-      const pValue = attrs[i + 1];
+  commitInstanceUpdate(node, attrsMap) {
+    for (let [pKey, pValue] of attrsMap.entries()) {
+      if (pValue === SkipEventFunc) {
+        continue;
+      }
 
       if (hostSpecialAttrSet.has(pKey)) {
         domHostConfig.fixHostSpecial(node, pKey, pValue);
-      } else {
-        const attrName = domHostConfig.fixAttrName(pKey);
+        continue;
+      }
 
-        if (pValue === void 0) {
-          node.removeAttribute(attrName);
-        } else if (attrName === "style") {
-          const styleValue = pValue;
+      const attrName = domHostConfig.fixAttrName(pKey);
+      if (pValue === void 0) {
+        node.removeAttribute(attrName);
+      } else if (attrName === "style") {
+        const styleValue = pValue;
 
-          if (isString(styleValue)) {
-            node.style.cssText = styleValue;
-          } else {
-            for (const key in styleValue) {
-              setStyle(node.style, key, styleValue[key]);
-            }
-          }
+        if (isString(styleValue)) {
+          node.style.cssText = styleValue;
         } else {
-          node.setAttribute(attrName, pValue);
+          for (const key in styleValue) {
+            setStyle(node.style, key, styleValue[key]);
+          }
         }
+      } else {
+        node.setAttribute(attrName, pValue);
       }
     }
   },
@@ -796,6 +724,7 @@ const HostText = Symbol("HostText");
 const HostComponent = Symbol("HostComponent");
 const FunctionComponent = Symbol("FunctionComponent");
 
+const resolvedPromise = Promise.resolve();
 const EmptyProps = {};
 class Fiber {
   key = null;
@@ -811,7 +740,6 @@ class Fiber {
 
   index = -1;
   oldIndex = -1;
-  preReferHost = null;
   __deletion = null;
   stateNode = null;
   preReferFiber = null;
@@ -822,7 +750,7 @@ class Fiber {
 
   flags = MountFlag;
   isPortal = false;
-  isRerender = true;
+  needRender = true;
 
   get normalChildren() {
     if (this.tagType === HostText) {
@@ -851,9 +779,8 @@ class Fiber {
 
     if (this.type === "text") {
       this.tagType = HostText;
-      this.stateNode = hostConfig.createTextInstance();
-      hostConfig.commitTextUpdate(this.stateNode, this.pendingProps.content);
       this.memoizedProps = this.pendingProps;
+      this.stateNode = hostConfig.createTextInstance(this.pendingProps.content);
     } else if (isString(this.type)) {
       this.tagType = HostComponent;
       this.stateNode = hostConfig.createInstance(this.type);
@@ -865,7 +792,13 @@ class Fiber {
   }
 
   rerender() {
-    mainQueueMacrotask(incomingQueue.bind(null, this));
+    if (!this.lock) {
+      this.lock = true;
+      resolvedPromise.then(() => {
+        this.lock = false;
+      });
+      mainQueueMacrotask(incomingQueue.bind(null, this));
+    }
   }
 }
 
@@ -888,7 +821,8 @@ const incomingQueue = (fiber) => {
       fiber.updateQueue.length = 0;
     }
 
-    fiber.isRerender = true;
+    fiber.needRender = true;
+    markUpdate(fiber);
 
     const renderContext = {
       MutationQueue: [],
@@ -928,16 +862,10 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.__skip = false;
     fiber.__lastDirty = false;
     fiber.oldIndex = fiber.index;
-
-    // 可优化: 当为 HostFiber 时，若只有事件函数不相等时，可以不用标记
-    if (
-      !fiber.isRerender &&
-      !objectEqual(fiber.pendingProps, fiber.memoizedProps, true)
-    ) {
-      fiber.isRerender = true;
-    }
+    fiber.needRender = finishedWork(fiber, false) !== NoUpdateFlag;
   } else {
     fiber = new Fiber(element, key, nodeKey);
+    finishedWork(fiber, true);
   }
 
   return fiber;
@@ -968,10 +896,10 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
   return i;
 };
 
-const isSkipFiber = (f) => !f.isRerender && f.flags === NoFlags;
+const isSkipFiber = (f) => !f.needRender && f.flags === NoFlags;
 
 const beginWork = (returnFiber) => {
-  if (!returnFiber.isRerender) {
+  if (!returnFiber.needRender) {
     return;
   }
 
@@ -990,10 +918,11 @@ const beginWork = (returnFiber) => {
   const reuseKeyList = hasOldChildFiber ? [] : null;
   const increasing = hasOldChildFiber ? [] : null;
   const indexCount = hasOldChildFiber ? [] : null;
+
   let j = 0;
   let lastDirtyFiber = null;
-
   const children = returnFiber.normalChildren;
+
   if (children != null) {
     let preFiber = null;
     let noPortalPreFiber = null;
@@ -1009,6 +938,7 @@ const beginWork = (returnFiber) => {
       const fiber = createFiber(element, key, nodeKey, deletionMap);
       fiber.index = index;
       fiber.return = returnFiber;
+      fiber.isPortal = !!fiber.pendingProps.__target;
 
       if (fiber.oldIndex === -1) {
         markMount(fiber, noPortalPreFiber);
@@ -1040,13 +970,6 @@ const beginWork = (returnFiber) => {
         }
       }
 
-      if (fiber.pendingProps.__target) {
-        fiber.isPortal = true;
-      } else {
-        fiber.isPortal = false;
-        noPortalPreFiber = fiber;
-      }
-
       if (index === 0) {
         lastDirtyFiber = fiber;
         returnFiber.child = fiber;
@@ -1055,6 +978,10 @@ const beginWork = (returnFiber) => {
       }
 
       preFiber = fiber;
+      if (!fiber.isPortal) {
+        noPortalPreFiber = fiber;
+      }
+      fiber.memoizedProps = fiber.pendingProps;
     }
   }
 
@@ -1102,115 +1029,129 @@ const beginWork = (returnFiber) => {
   }
 };
 
-const finishedWork = (fiber) => {
-  if (!isSkipFiber(fiber)) {
-    const oldProps = fiber.memoizedProps;
-    const newProps = fiber.pendingProps;
+const NoUpdateFlag = 0 << 0;
+const SelfUpdateFlag = 1 << 0;
+const SubTreeUpdateFlag = 1 << 1;
 
-    let isNeedMarkUpdate = false;
+const SkipEventFunc = noop;
+const makePropsMap = (props) => {
+  const result = new Map();
+  for (const pKey in props) {
+    let pValue = props[pKey];
 
-    if (oldProps.ref !== newProps.ref) {
-      const oldRef = oldProps.ref;
-      const newRef = newProps.ref;
-
-      isNeedMarkUpdate = true;
-
-      fiber.ref = (instance) => {
-        if (isFunction(oldRef)) {
-          oldRef(null);
-        } else if (oldRef && "current" in oldRef) {
-          oldRef.current = null;
-        }
-
-        if (isFunction(newRef)) {
-          newRef(instance);
-        } else if (newRef && "current" in newRef) {
-          newRef.current = instance;
-        }
-      };
-
-      markRef(fiber);
+    if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
+      continue;
     }
 
-    if (fiber.tagType === HostText) {
-      if (!oldProps || newProps.content !== oldProps.content) {
-        fiber.memoizedState = newProps.content;
-        isNeedMarkUpdate = true;
+    if (testHostSpecialAttr(pKey)) {
+      if (hostSpecialAttrSet.has(pKey)) {
+        result.set(pKey, pValue);
+      } else {
+        result.set(pKey, SkipEventFunc);
       }
-    } else if (fiber.tagType === HostComponent) {
-      const attrs = [];
-      const skipKeySet = new Set();
+      continue;
+    }
 
-      for (const pKey in newProps) {
+    const isBooleanAttr = isSpecialBooleanAttr(pKey);
+    if (pValue == null || (isBooleanAttr && !includeBooleanAttr(pValue))) {
+      pValue = void 0;
+    } else {
+      pValue = isBooleanAttr ? "" : pValue;
+    }
+    result.set(pKey, props[pKey]);
+  }
+  return result;
+};
+
+const finishedWork = (fiber, isMount) => {
+  const oldProps = fiber.memoizedProps;
+  const newProps = fiber.pendingProps;
+
+  let result = NoUpdateFlag;
+  let isNeedMarkUpdate = false;
+
+  if (oldProps.ref !== newProps.ref) {
+    const oldRef = oldProps.ref;
+    const newRef = newProps.ref;
+
+    isNeedMarkUpdate = true;
+
+    fiber.ref = (instance) => {
+      if (isFunction(oldRef)) {
+        oldRef(null);
+      } else if (oldRef && "current" in oldRef) {
+        oldRef.current = null;
+      }
+
+      if (isFunction(newRef)) {
+        newRef(instance);
+      } else if (newRef && "current" in newRef) {
+        newRef.current = instance;
+      }
+    };
+
+    markRef(fiber);
+  }
+
+  if (fiber.tagType === HostText) {
+    if (!oldProps || newProps.content !== oldProps.content) {
+      fiber.memoizedState = newProps.content;
+      isNeedMarkUpdate = true;
+    }
+  } else if (fiber.tagType === HostComponent) {
+    const newAttrsMap = makePropsMap(newProps);
+
+    if (!isMount) {
+      for (const pKey in oldProps) {
         if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
           continue;
         }
 
-        const pValue = newProps[pKey];
-        let oldPValue = void 0;
+        if (newAttrsMap.has(pKey)) {
+          const oldPValue = oldProps[pKey];
+          const newPValue = newAttrsMap.get(pKey);
 
-        if (pKey in oldProps) {
-          oldPValue = oldProps[pKey];
-          skipKeySet.add(pKey);
-        }
-
-        if (objectEqual(pValue, oldPValue, true)) {
-          continue;
-        }
-
-        if (testHostSpecialAttr(pKey)) {
-          if (
-            hostSpecialAttrSet.has(pKey) &&
-            isFunction(pValue) ^ isFunction(oldPValue)
-          ) {
-            attrs.push(pKey, isFunction(pValue) ? pValue : void 0);
+          if (testHostSpecialAttr(pKey)) {
+            if (isFunction(newPValue) ^ isFunction(oldPValue)) {
+              newAttrsMap.set(pKey, isFunction(newPValue) ? newPValue : void 0);
+            } else {
+              newAttrsMap.delete(pKey);
+            }
+          } else {
+            if (objectEqual(newPValue, oldPValue, true)) {
+              newAttrsMap.delete(pKey);
+            }
           }
           continue;
         }
 
-        const isBoolean = isSpecialBooleanAttr(pKey);
-        if (pValue == null || (isBoolean && !includeBooleanAttr(pValue))) {
-          attrs.push(pKey, void 0);
-        } else {
-          attrs.push(pKey, isBoolean ? "" : pValue);
-        }
-      }
-
-      for (const pKey in oldProps) {
-        if (
-          pKey === "children" ||
-          pKey === "ref" ||
-          pKey[0] === "_" ||
-          skipKeySet.has(pKey)
-        ) {
-          continue;
-        }
-
-        if (testHostSpecialAttr(pKey)) {
-          if (hostSpecialAttrSet.has(pKey)) {
-            attrs.push(pKey, void 0);
-          }
-        } else {
-          attrs.push(pKey, void 0);
-        }
-      }
-
-      fiber.memoizedState = attrs;
-      if (fiber.memoizedState.length) {
-        isNeedMarkUpdate = true;
-      }
-    } else {
-      if (!isMarkMount(fiber) && fiber.isRerender) {
-        isNeedMarkUpdate = true;
+        newAttrsMap.delete(pKey);
       }
     }
 
-    if (isNeedMarkUpdate) {
-      markUpdate(fiber);
+    fiber.memoizedState = newAttrsMap;
+    if (fiber.memoizedState.size) {
+      isNeedMarkUpdate = true;
+    }
+
+    if (isMount || !objectEqual(oldProps.children, newProps.children, true)) {
+      result |= SubTreeUpdateFlag;
+    }
+  } else {
+    if (
+      !isMount &&
+      (fiber.needRender || !objectEqual(oldProps, newProps, true))
+    ) {
+      isNeedMarkUpdate = true;
     }
   }
 
-  fiber.memoizedProps = fiber.pendingProps;
+  if (isNeedMarkUpdate) {
+    markUpdate(fiber);
+    result |= SelfUpdateFlag;
+  }
+
+  return result;
 };
 
 function* genFiberTree(returnFiber) {
@@ -1280,11 +1221,6 @@ const childDeletionFiber = (returnFiber) => {
 
       if (f.tagType === FunctionComponent) {
         dispatchHook(f, "onUnMounted", true);
-        DomFragmentPool.releaseElement(f.stateNode.fg);
-        DomCommentPool.releaseElement(f.stateNode.startNode);
-        DomCommentPool.releaseElement(f.stateNode.endNode);
-      } else if (f.tagType === HostText) {
-        DomTextPool.releaseElement(f.stateNode);
       }
 
       f.ref && f.ref(null);
@@ -1341,13 +1277,14 @@ const commitRoot = (renderContext) => {
       unMarkRef(fiber);
     }
 
-    fiber.isRerender = false;
+    fiber.needRender = false;
     fiber.flags = NoFlags;
   }
 };
 
 const toCommit = (renderContext) => {
   commitRoot(renderContext);
+
   if (renderContext.restoreDataFn) {
     renderContext.restoreDataFn();
   }
@@ -1361,13 +1298,11 @@ const innerRender = (renderContext) => {
     return toCommit.bind(null, renderContext);
   }
 
-  finishedWork(current);
-
   if (current.flags) {
     renderContext.MutationQueue.push(current);
   } else {
     current.flags = NoFlags;
-    current.isRerender = false;
+    current.needRender = false;
   }
 
   return true;
