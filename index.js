@@ -265,7 +265,7 @@
     }
   };
   const eventCallback = (e) => {
-    const pKey = "on" + e.type[0].toUpperCase() + e.type.slice(1);
+    const pKey = `on${e.type[0].toUpperCase()}${e.type.slice(1)}`;
     const elementProps = e.target[elementPropsKey]
       ? e.target[elementPropsKey].memoizedProps
       : null;
@@ -819,7 +819,7 @@
     }
   }
 
-  Fiber.genNodeKey = (key, pNodeKey = "") => pNodeKey + "^" + key;
+  Fiber.genNodeKey = (key, pNodeKey = "") => `${pNodeKey}^${key}`;
 
   Fiber.initLifecycle = (fiber) => {
     fiber.onMounted = new Set();
@@ -946,11 +946,9 @@
 
       for (let index = 0; index < children.length; index++) {
         const element = children[index];
-        const isHostType = isString(element.type);
-        const key =
-          (isHostType ? element.type : element.type.name) +
-          "#" +
-          (element.key != null ? element.key : index);
+        const key = `${
+          isString(element.type) ? element.type : element.type.name
+        }#${element.key != null ? element.key : index}`;
         const nodeKey = Fiber.genNodeKey(key, returnFiber.nodeKey);
         const fiber = createFiber(element, key, nodeKey, deletionMap);
         fiber.index = index;
@@ -1027,6 +1025,8 @@
             lastDirtyFiber = fiber;
           }
         }
+
+        deletionMap.delete(fiberKey);
       }
     }
 
@@ -1034,15 +1034,9 @@
       lastDirtyFiber.__lastDirty = true;
     }
 
-    if (hasOldChildFiber) {
-      for (const k of reuseKeyList) {
-        deletionMap.delete(k);
-      }
-
-      if (deletionMap.size) {
-        returnFiber.__deletion = deletionMap;
-        markChildDeletion(returnFiber);
-      }
+    if (hasOldChildFiber && deletionMap.size) {
+      returnFiber.__deletion = deletionMap;
+      markChildDeletion(returnFiber);
     }
   };
 
@@ -1051,8 +1045,7 @@
   const SubTreeUpdateFlag = 1 << 1;
 
   const SkipEventFunc = noop;
-  const makePropsMap = (props) => {
-    const result = new Map();
+  const fillNewAttrMap = (attrMap, props) => {
     for (const pKey in props) {
       let pValue = props[pKey];
 
@@ -1062,9 +1055,9 @@
 
       if (testHostSpecialAttr(pKey)) {
         if (hostSpecialAttrSet.has(pKey)) {
-          result.set(pKey, pValue);
+          attrMap.set(pKey, pValue);
         } else {
-          result.set(pKey, SkipEventFunc);
+          attrMap.set(pKey, SkipEventFunc);
         }
         continue;
       }
@@ -1075,9 +1068,8 @@
       } else {
         pValue = isBooleanAttr ? "" : pValue;
       }
-      result.set(pKey, props[pKey]);
+      attrMap.set(pKey, props[pKey]);
     }
-    return result;
   };
 
   const finishedWork = (fiber, isMount) => {
@@ -1087,10 +1079,9 @@
     let result = NoUpdateFlag;
     let isNeedMarkUpdate = false;
 
-    if (oldProps.ref !== newProps.ref) {
-      const oldRef = oldProps.ref;
-      const newRef = newProps.ref;
-
+    const oldRef = oldProps.ref;
+    const newRef = newProps.ref;
+    if (oldRef !== newRef) {
       isNeedMarkUpdate = true;
 
       fiber.ref = (instance) => {
@@ -1116,7 +1107,14 @@
         isNeedMarkUpdate = true;
       }
     } else if (fiber.tagType === HostComponent) {
-      const newAttrsMap = makePropsMap(newProps);
+      if (fiber.memoizedState) {
+        fiber.memoizedState.clear();
+      } else {
+        fiber.memoizedState = new Map();
+      }
+
+      const newAttrMap = fiber.memoizedState;
+      fillNewAttrMap(newAttrMap, newProps);
 
       if (!isMount) {
         for (const pKey in oldProps) {
@@ -1124,32 +1122,31 @@
             continue;
           }
 
-          if (newAttrsMap.has(pKey)) {
+          if (newAttrMap.has(pKey)) {
             const oldPValue = oldProps[pKey];
-            const newPValue = newAttrsMap.get(pKey);
+            const newPValue = newAttrMap.get(pKey);
 
             if (testHostSpecialAttr(pKey)) {
               if (isFunction(newPValue) ^ isFunction(oldPValue)) {
-                newAttrsMap.set(
+                newAttrMap.set(
                   pKey,
                   isFunction(newPValue) ? newPValue : void 0
                 );
               } else {
-                newAttrsMap.delete(pKey);
+                newAttrMap.delete(pKey);
               }
             } else {
               if (objectEqual(newPValue, oldPValue, true)) {
-                newAttrsMap.delete(pKey);
+                newAttrMap.delete(pKey);
               }
             }
             continue;
           }
 
-          newAttrsMap.delete(pKey);
+          newAttrMap.delete(pKey);
         }
       }
 
-      fiber.memoizedState = newAttrsMap;
       if (fiber.memoizedState.size) {
         isNeedMarkUpdate = true;
       }
@@ -1318,7 +1315,7 @@
       return toCommit.bind(null, renderContext);
     }
 
-    if (current.flags) {
+    if (current.flags !== NoFlags) {
       renderContext.MutationQueue.push(current);
     } else {
       current.flags = NoFlags;

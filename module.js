@@ -1008,6 +1008,8 @@ const beginWork = (returnFiber) => {
           lastDirtyFiber = fiber;
         }
       }
+
+      deletionMap.delete(fiberKey);
     }
   }
 
@@ -1015,15 +1017,9 @@ const beginWork = (returnFiber) => {
     lastDirtyFiber.__lastDirty = true;
   }
 
-  if (hasOldChildFiber) {
-    for (const k of reuseKeyList) {
-      deletionMap.delete(k);
-    }
-
-    if (deletionMap.size) {
-      returnFiber.__deletion = deletionMap;
-      markChildDeletion(returnFiber);
-    }
+  if (hasOldChildFiber && deletionMap.size) {
+    returnFiber.__deletion = deletionMap;
+    markChildDeletion(returnFiber);
   }
 };
 
