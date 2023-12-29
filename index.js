@@ -105,7 +105,7 @@
           } else {
             scheduledQueue.length -= 1;
           }
-          throttleTimes = (throttleTimes + 1) % 40;
+          throttleTimes = (throttleTimes + 1) % 30;
         }
       } catch (e) {
         console.error(e);
@@ -312,74 +312,50 @@
     createFragment() {
       return document.createDocumentFragment();
     },
-    toLast(child, container) {
-      if (isVNode(container)) {
-        const parentNode = container.endNode.parentNode;
-
-        if (isVNode(child)) {
-          parentNode.insertBefore(child.toFragment(), container.endNode);
-        } else {
-          parentNode.insertBefore(child, container.endNode);
-        }
-      } else {
-        if (isVNode(child)) {
-          container.appendChild(child.toFragment());
-        } else {
-          container.appendChild(child);
-        }
-      }
-    },
-    toFirst(child, container) {
-      if (isVNode(container)) {
-        const referenceNode = container.startNode.nextSibling;
-        const parentNode = container.endNode.parentNode;
-
-        if (isVNode(child)) {
-          parentNode.insertBefore(child.toFragment(), referenceNode);
-        } else {
-          parentNode.insertBefore(child, referenceNode);
-        }
-      } else {
-        if (isVNode(child)) {
-          container.prepend(child.toFragment());
-        } else {
-          container.prepend(child);
-        }
-      }
-    },
-    toAfter(child, container, reference) {
-      let referenceNode = isVNode(reference)
-        ? reference.endNode.nextSibling
-        : reference.nextSibling;
-
-      if (isVNode(container)) {
-        const parentNode = container.endNode.parentNode;
-
-        if (isVNode(child)) {
-          parentNode.insertBefore(child.toFragment(), referenceNode);
-        } else {
-          parentNode.insertBefore(child, referenceNode);
-        }
-      } else {
-        if (isVNode(child)) {
-          container.insertBefore(child.toFragment(), referenceNode);
-        } else {
-          container.insertBefore(child, referenceNode);
-        }
-      }
-    },
-    removeChild(child) {
+    toFirst(child, reference) {
       if (isVNode(child)) {
-        const startNode = child.startNode;
-        const endNode = child.endNode;
-        while (startNode.nextSibling !== endNode) {
-          startNode.parentNode.removeChild(startNode.nextSibling);
-        }
-        startNode.parentNode.removeChild(startNode);
-        endNode.parentNode.removeChild(endNode);
+        reference.insertBefore(child.toFragment(), reference.firstChild);
       } else {
-        child.parentNode.removeChild(child);
-        child[elementPropsKey] = null;
+        reference.insertBefore(child, reference.firstChild);
+      }
+    },
+    toLast(child, reference) {
+      if (isVNode(child)) {
+        reference.appendChild(child.toFragment());
+      } else {
+        reference.appendChild(child);
+      }
+    },
+    toBefore(node, reference) {
+      if (isVNode(node)) {
+        reference.parentNode.insertBefore(node.toFragment(), reference);
+      } else {
+        reference.parentNode.insertBefore(node, reference);
+      }
+    },
+    toAfter(node, reference) {
+      if (isVNode(node)) {
+        reference.parentNode.insertBefore(
+          node.toFragment(),
+          reference.nextSibling
+        );
+      } else {
+        reference.parentNode.insertBefore(node, reference.nextSibling);
+      }
+    },
+    removeNode(node) {
+      if (isVNode(node)) {
+        const startNode = node.startNode;
+        const endNode = node.endNode;
+        const parentNode = startNode.parentNode;
+        while (startNode.nextSibling !== endNode) {
+          parentNode.removeChild(startNode.nextSibling);
+        }
+        parentNode.removeChild(startNode);
+        parentNode.removeChild(endNode);
+      } else {
+        node.parentNode.removeChild(node);
+        node[elementPropsKey] = null;
       }
     },
     commitTextUpdate(node, content) {
@@ -445,7 +421,7 @@
     },
   };
 
-  const isVNode = (o) => o.constructor === VNode;
+  const isVNode = (o) => o instanceof VNode;
 
   class VNode {
     constructor(key) {
@@ -708,7 +684,7 @@
   };
   const unMarkMount = (fiber) => {
     fiber.flags &= ~MountFlag;
-    fiber.preReferFiber = null;
+    fiber.preReferFiber = void 0;
   };
   const isMarkMount = (fiber) => fiber.flags & MountFlag;
   const markMoved = (fiber, preFiber) => {
@@ -717,7 +693,7 @@
   };
   const unMarkMoved = (fiber) => {
     fiber.flags &= ~MovedFlag;
-    fiber.preReferFiber = null;
+    fiber.preReferFiber = void 0;
   };
   const isMarkMoved = (fiber) => fiber.flags & MovedFlag;
   const markRef = (fiber) => {
@@ -879,7 +855,7 @@
       fiber.__skip = false;
       fiber.__lastDirty = false;
       fiber.oldIndex = fiber.index;
-      fiber.needRender = finishedWork(fiber, false) !== NoUpdateFlag;
+      fiber.needRender = finishedWork(fiber, false);
     } else {
       fiber = new Fiber(element, key, nodeKey);
       finishedWork(fiber, true);
@@ -1040,10 +1016,6 @@
     }
   };
 
-  const NoUpdateFlag = 0 << 0;
-  const SelfUpdateFlag = 1 << 0;
-  const SubTreeUpdateFlag = 1 << 1;
-
   const SkipEventFunc = noop;
   const fillNewAttrMap = (attrMap, props) => {
     for (const pKey in props) {
@@ -1076,14 +1048,12 @@
     const oldProps = fiber.memoizedProps;
     const newProps = fiber.pendingProps;
 
-    let result = NoUpdateFlag;
+    let hasTreeChange = isMount;
     let isNeedMarkUpdate = false;
 
     const oldRef = oldProps.ref;
     const newRef = newProps.ref;
     if (oldRef !== newRef) {
-      isNeedMarkUpdate = true;
-
       fiber.ref = (instance) => {
         if (isFunction(oldRef)) {
           oldRef(null);
@@ -1145,30 +1115,28 @@
 
           newAttrMap.delete(pKey);
         }
-      }
-
-      if (fiber.memoizedState.size) {
+        isNeedMarkUpdate = !!fiber.memoizedState.size;
+      } else {
         isNeedMarkUpdate = true;
       }
 
-      if (isMount || !objectEqual(oldProps.children, newProps.children, true)) {
-        result |= SubTreeUpdateFlag;
-      }
+      hasTreeChange ||= !objectEqual(
+        oldProps.children,
+        newProps.children,
+        true
+      );
     } else {
-      if (
-        !isMount &&
-        (fiber.needRender || !objectEqual(oldProps, newProps, true))
-      ) {
+      if (fiber.needRender || !objectEqual(oldProps, newProps, true)) {
         isNeedMarkUpdate = true;
+        hasTreeChange = true;
       }
     }
 
     if (isNeedMarkUpdate) {
       markUpdate(fiber);
-      result |= SelfUpdateFlag;
     }
 
-    return result;
+    return hasTreeChange;
   };
 
   function* genFiberTree(returnFiber) {
@@ -1210,12 +1178,30 @@
       return;
     }
 
+    const isMountInsert = isMarkMount(parentFiber);
+    const usePosition = isVNode(parentFiber.stateNode);
+
+    if (isMountInsert) {
+      if (usePosition) {
+        hostConfig.toBefore(fiber.stateNode, parentFiber.stateNode.endNode);
+      } else {
+        hostConfig.toLast(fiber.stateNode, parentFiber.stateNode);
+      }
+      return;
+    }
+
     if (fiber.preReferFiber) {
       hostConfig.toAfter(
         fiber.stateNode,
-        parentFiber.stateNode,
-        fiber.preReferFiber.stateNode
+        isVNode(fiber.preReferFiber.stateNode)
+          ? fiber.preReferFiber.stateNode.endNode
+          : fiber.preReferFiber.stateNode
       );
+      return;
+    }
+
+    if (usePosition) {
+      hostConfig.toAfter(fiber.stateNode, parentFiber.stateNode.startNode);
     } else {
       hostConfig.toFirst(fiber.stateNode, parentFiber.stateNode);
     }
@@ -1231,7 +1217,7 @@
 
   const childDeletionFiber = (returnFiber) => {
     for (const fiber of returnFiber.__deletion.values()) {
-      hostConfig.removeChild(fiber.stateNode);
+      hostConfig.removeNode(fiber.stateNode);
 
       for (const f of walkFiberTree(fiber)) {
         markUnMount(f);
@@ -1256,43 +1242,43 @@
         unMarkChildDeletion(fiber);
       }
 
-      if (isMarkUpdate(fiber)) {
-        if (isHostFiber) {
+      if (isHostFiber) {
+        if (isMarkUpdate(fiber)) {
           updateHostFiber(fiber);
-        } else {
-          dispatchHook(fiber, "onBeforeUpdate");
-          dispatchHook(fiber, "onUpdated", true);
         }
-        unMarkUpdate(fiber);
-      }
-
-      if (isMarkMount(fiber)) {
-        placementFiber(fiber, true);
-        if (!isHostFiber) {
+        if (isMarkMount(fiber)) {
+          placementFiber(fiber, true);
+        }
+        if (isMarkMoved(fiber)) {
+          placementFiber(fiber, false);
+        }
+        if (isMarkRef(fiber)) {
+          fiber.ref(fiber.stateNode);
+        }
+      } else {
+        if (isMarkMount(fiber)) {
+          placementFiber(fiber, true);
           dispatchHook(fiber, "onMounted", true);
+        }
+        if (isMarkUpdate(fiber)) {
+          if (!isMarkMount(fiber)) {
+            dispatchHook(fiber, "onBeforeUpdate");
+          }
           dispatchHook(fiber, "onUpdated", true);
         }
-        unMarkMount(fiber);
-      }
-
-      if (isMarkMoved(fiber)) {
-        placementFiber(fiber, false);
-
-        if (!isHostFiber) {
+        if (isMarkMoved(fiber)) {
+          placementFiber(fiber, false);
           dispatchHook(fiber, "onBeforeMove");
           dispatchHook(fiber, "onMoved", true);
         }
-        unMarkMoved(fiber);
-      }
-
-      if (isMarkRef(fiber)) {
-        if (isHostFiber) {
-          fiber.ref(fiber.stateNode);
-        } else {
+        if (isMarkRef(fiber)) {
           fiber.ref(fiber);
         }
-        unMarkRef(fiber);
       }
+      unMarkUpdate(fiber);
+      unMarkMount(fiber);
+      unMarkMoved(fiber);
+      unMarkRef(fiber);
 
       fiber.needRender = false;
       fiber.flags = NoFlags;
