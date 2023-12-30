@@ -136,7 +136,7 @@ const Row = ({ selected, item, dispatch }) => (
     </td>
 
     <td className="col-md-4">
-      <a>{item.label}</a>
+      <a>静态节点</a>
       <div className="fdsa">
         <span>
           <i>33333</i>
