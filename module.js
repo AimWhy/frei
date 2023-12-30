@@ -25,9 +25,13 @@ const objectEqual = (object1, object2, isDeep) => {
     return false;
   }
 
+  if (object1.constructor !== object2.constructor) {
+    isDeep && isDeep(object1, object2);
+    return false;
+  }
+
   const keys1 = Object.keys(object1);
   const keys2 = Object.keys(object2);
-
   if (keys1.length !== keys2.length) {
     isDeep && isDeep(object1, object2);
     return false;
