@@ -30,9 +30,16 @@ const objectEqual = (object1, object2, isDeep) => {
     return false;
   }
 
+  if (Array.isArray(object1) && object1.length !== object2.length) {
+    isDeep && isDeep(object1, object2);
+    return false;
+  }
+
   const keys1 = Object.keys(object1);
-  const keys2 = Object.keys(object2);
-  if (keys1.length !== keys2.length) {
+  const keyLen1 = keys1.length;
+  const keyLen2 = Object.keys(object2).length;
+
+  if (keyLen1 !== keyLen2) {
     isDeep && isDeep(object1, object2);
     return false;
   }
