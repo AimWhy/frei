@@ -416,7 +416,7 @@ const domHostConfig = {
   },
 };
 
-const isVNode = (o) => o instanceof VNode;
+const isVNode = (o) => isFunction(o.toFragment);
 
 class VNode {
   constructor(key) {
@@ -692,7 +692,6 @@ const resolved = Promise.resolve();
 const nextTick = (callback) => resolved.then(callback);
 
 class Fiber {
-  key = null;
   ref = null;
   type = null;
   nodeKey = "";
@@ -729,17 +728,21 @@ class Fiber {
       ? this.pendingProps.children
       : genComponentInnerElement(this);
 
-    if (tempChildren == void 0) {
+    if (tempChildren == null) {
       return null;
+    } else if (isArray(tempChildren)) {
+      const len = tempChildren.length;
+      const result = Array(len);
+      for (let i = 0; i < len; i++) {
+        result[i] = toElement(tempChildren[i]);
+      }
+      return result;
     } else {
-      return isArray(tempChildren)
-        ? tempChildren.map(toElement)
-        : [toElement(tempChildren)];
+      return [toElement(tempChildren)];
     }
   }
 
-  constructor(element, key, nodeKey) {
-    this.key = key;
+  constructor(element, nodeKey) {
     this.nodeKey = nodeKey;
     this.type = element.type;
     this.pendingProps = element.props;
@@ -751,12 +754,14 @@ class Fiber {
       // 文本节点，创建时直接标记更新完
       this.memoizedProps = this.pendingProps;
     } else if (isString(this.type)) {
+      this.isPortal = !!this.pendingProps.__target;
       this.isHostComponent = true;
       this.stateNode = hostConfig.createInstance(this.type);
 
       // 常规元素，添加 $ElementPropsKey 属性指向 fiber, 用于事件委托 和 调试
       hostConfig.updateInstanceProps(this.stateNode, this);
     } else {
+      this.isPortal = !!this.pendingProps.__target;
       this.isFunctionComponent = true;
       this.stateNode = new VNode(this.nodeKey);
     }
@@ -774,7 +779,10 @@ class Fiber {
   }
 }
 
-Fiber.genNodeKey = (key, pNodeKey = "") => `${pNodeKey}^${key}`;
+Fiber.genNodeKey = (element, pNodeKey = "", index) =>
+  `${pNodeKey}^${isString(element.type) ? element.type : element.type.name}#${
+    element.key != null ? element.key : index
+  }`;
 
 Fiber.initLifecycle = (fiber) => {
   fiber.onMounted = new Set();
@@ -824,7 +832,7 @@ function* walkFiberTree(returnFiber, fn = noop) {
   yield returnFiber;
 }
 
-const createFiber = (element, key, nodeKey, deletionMap) => {
+const createFiber = (element, nodeKey, deletionMap) => {
   let fiber = deletionMap ? deletionMap.get(nodeKey) : null;
 
   if (fiber) {
@@ -834,9 +842,10 @@ const createFiber = (element, key, nodeKey, deletionMap) => {
     fiber.__skip = false;
     fiber.__lastDirty = false;
     fiber.oldIndex = fiber.index;
+    fiber.isPortal = !!fiber.pendingProps.__target;
     fiber.needRender = finishedWork(fiber, false);
   } else {
-    fiber = new Fiber(element, key, nodeKey);
+    fiber = new Fiber(element, nodeKey);
     finishedWork(fiber, true);
   }
 
@@ -909,14 +918,10 @@ const beginWork = (returnFiber) => {
 
     for (let index = 0; index < children.length; index++) {
       const element = children[index];
-      const key = `${
-        isString(element.type) ? element.type : element.type.name
-      }#${element.key != null ? element.key : index}`;
-      const nodeKey = Fiber.genNodeKey(key, returnFiber.nodeKey);
-      const fiber = createFiber(element, key, nodeKey, deletionMap);
+      const nodeKey = Fiber.genNodeKey(element, returnFiber.nodeKey, index);
+      const fiber = createFiber(element, nodeKey, deletionMap);
       fiber.index = index;
       fiber.return = returnFiber;
-      fiber.isPortal = !!fiber.pendingProps.__target;
 
       if (fiber.oldIndex === -1) {
         markMount(fiber, noPortalPreFiber);
@@ -986,7 +991,7 @@ const beginWork = (returnFiber) => {
       if (isSkipFiber(fiber)) {
         fiber.__skip = true;
       } else {
-        if (!lastDirtyFiber || fiber.index >= lastDirtyFiber.index) {
+        if (lastDirtyFiber === null || fiber.index >= lastDirtyFiber.index) {
           lastDirtyFiber = fiber;
         }
       }
@@ -995,7 +1000,7 @@ const beginWork = (returnFiber) => {
     }
   }
 
-  if (lastDirtyFiber) {
+  if (lastDirtyFiber !== null) {
     lastDirtyFiber.__lastDirty = true;
   }
 
@@ -1130,8 +1135,6 @@ function* genFiberTree(returnFiber) {
     if (fiber.__skip) {
       // 跳过不处理
     } else if (fiber.isHostText) {
-      yield fiber;
-    } else if (isSkipFiber(fiber)) {
       yield fiber;
     } else {
       yield* genFiberTree(fiber);
@@ -1291,8 +1294,10 @@ const innerRender = (renderContext) => {
 };
 
 export const createRoot = (container) => {
-  const fiberKey = container.id || (Date.now() + Math.random()).toString(36);
   const fiberType = container.tagName.toLowerCase();
+  const fiberNodeKey = `${fiberType}#${
+    container.id || (Date.now() + Math.random()).toString(36)
+  }`;
 
   Object.keys(eventTypeMap).forEach((eventType) =>
     initEvent(container, eventType)
@@ -1302,8 +1307,7 @@ export const createRoot = (container) => {
     render(jsx) {
       const rootFiber = createFiber(
         { type: fiberType, props: { children: jsx } },
-        fiberKey,
-        `${fiberType}#${fiberKey}`
+        fiberNodeKey
       );
 
       rootFiber.stateNode = container;
