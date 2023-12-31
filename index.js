@@ -8,10 +8,12 @@
       factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
+
   const jsx = (type, props = {}, key = null) => ({
     key,
     type,
     props,
+    $$typeof: true,
   });
 
   const Fragment = (props) => props.children;
@@ -20,6 +22,11 @@
   const isArray = (val) => Array.isArray(val);
   const isString = (val) => typeof val === "string";
   const isFunction = (val) => typeof val === "function";
+  const print = (method, ...args) => {
+    if (false) {
+      console[method](...args);
+    }
+  };
 
   const objectEqual = (object1, object2, isDeep) => {
     if (object1 === object2) {
@@ -35,10 +42,21 @@
       return false;
     }
 
-    const keys1 = Object.keys(object1);
-    const keys2 = Object.keys(object2);
+    if (object1.constructor !== object2.constructor) {
+      isDeep && isDeep(object1, object2);
+      return false;
+    }
 
-    if (keys1.length !== keys2.length) {
+    if (isArray(object1) && object1.length !== object2.length) {
+      isDeep && isDeep(object1, object2);
+      return false;
+    }
+
+    const keys1 = Object.keys(object1);
+    const keyLen1 = keys1.length;
+    const keyLen2 = Object.keys(object2).length;
+
+    if (keyLen1 !== keyLen2) {
       isDeep && isDeep(object1, object2);
       return false;
     }
@@ -68,7 +86,13 @@
   };
 
   const propsEqual = (props1, props2) => {
-    if (NoEqualPropMap.has(props1) && NoEqualPropMap.get(props1) === props2) {
+    if (
+      props1 != null &&
+      typeof props1 === "object" &&
+      NoEqualPropMap.has(props1) &&
+      NoEqualPropMap.get(props1) === props2
+    ) {
+      print("count", "Equal Reuse Count");
       return false;
     }
 
@@ -76,18 +100,19 @@
   };
 
   const isSpecialBooleanAttr = (val) =>
-    val === "allowfullscreen" ||
-    val === "formnovalidate" ||
-    val === "novalidate" ||
-    val === "itemscope" ||
-    val === "nomodule" ||
-    val === "readonly" ||
-    val === "ismap";
+    "allowfullscreen" === val ||
+    "formnovalidate" === val ||
+    "novalidate" === val ||
+    "itemscope" === val ||
+    "nomodule" === val ||
+    "readonly" === val ||
+    "ismap" === val;
 
   const includeBooleanAttr = (value) => value === "" || !!value;
 
   const genQueueMacrotask = (macrotaskName) => {
-    const frameYieldMs = 10;
+    const FrameYieldMs = 10;
+    const ThrottleCount = 30;
     const scheduledQueue = [];
     const channel = new MessageChannel();
 
@@ -98,14 +123,13 @@
         return;
       }
 
-      let throttleTimes = 0;
-      const startTime = Date.now();
-      const timeoutTime = startTime + frameYieldMs;
+      let count = 0;
+      const timeoutTime = Date.now() + FrameYieldMs;
 
       try {
         while (
           scheduledQueue.length > 0 &&
-          (throttleTimes !== 0 || Date.now() <= timeoutTime)
+          (count !== 0 || Date.now() <= timeoutTime)
         ) {
           const work = scheduledQueue[scheduledQueue.length - 1];
 
@@ -119,7 +143,7 @@
           } else {
             scheduledQueue.length -= 1;
           }
-          throttleTimes = (throttleTimes + 1) % 30;
+          count = (count + 1) % ThrottleCount;
         }
       } catch (e) {
         console.error(e);
@@ -150,21 +174,17 @@
   const $ElementPropsKey = Symbol.for("frei.Fiber");
 
   /* #region 事件相关 */
+  const toEventName = (eventType) =>
+    `on${eventType[0].toUpperCase()}${eventType.slice(1)}`;
 
-  const eventTypeMap = {
-    click: ["onClickCapture", "onClick"],
-    dblclick: ["onDblclickCapture", "onDblclick"],
-    mousedown: ["onMousedownCapture", "onMousedown"],
-    mouseup: ["onMouseupCapture", "onMouseup"],
-    mousemove: ["onMousemoveCapture", "onMousemove"],
-    keydown: ["onKeydownCapture", "onKeydown"],
-    keyup: ["onKeyupCapture", "onKeyup"],
-    keypress: ["onKeypressCapture", "onKeypress"],
-    submit: ["onSubmitCapture", "onSubmit"],
-    touchstart: ["onTouchstartCapture", "onTouchstart"],
-    touchend: ["onTouchendCapture", "onTouchend"],
-    touchmove: ["onTouchmoveCapture", "onTouchmove"],
-  };
+  const eventTypeMap = `click,dblclick,mousedown,mouseup,mousemove,
+  keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
+    .split(/[^a-z]+/)
+    .reduce((map, eventType) => {
+      const eventName = toEventName(eventType);
+      map[eventType] = [`${eventName}Capture`, eventName];
+      return map;
+    }, {});
 
   const collectPaths = (targetElement, container, eventType) => {
     const paths = {
@@ -173,13 +193,13 @@
     };
 
     while (targetElement && targetElement !== container) {
-      const callbackNameList = eventTypeMap[eventType];
+      const eventNameList = eventTypeMap[eventType];
       const elementProps = targetElement[$ElementPropsKey]
         ? targetElement[$ElementPropsKey].memoizedProps
         : null;
 
-      if (elementProps && callbackNameList) {
-        const [captureName, bubbleName] = callbackNameList;
+      if (elementProps && eventNameList) {
+        const [captureName, bubbleName] = eventNameList;
         if (elementProps[captureName]) {
           paths.capture.unshift(elementProps[captureName]);
         }
@@ -247,17 +267,10 @@
   };
 
   const testHostSpecialAttr = (name) => /^on[A-Z]/.test(name);
-  const hostSpecialAttrSet = new Set([
-    "onLoad",
-    "onBeforeunload",
-    "onUnload",
-    "onScroll",
-    "onFocus",
-    "onBlur",
-    "onPointerenter",
-    "onPointerleave",
-    "onInput",
-  ]);
+  const hostSpecialAttrSet = new Set(
+    `onLoad,onBeforeunload,onUnload,onScroll,onFocus,onBlur,
+    onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
+  );
 
   const onCompositionStart = (e) => {
     e.target.composing = true;
@@ -270,19 +283,15 @@
   };
   const onInputFixed = (e) => {
     if (!e.target.composing) {
-      const elementProps = e.target[$ElementPropsKey]
-        ? e.target[$ElementPropsKey].memoizedProps
-        : null;
-      if (elementProps && elementProps.onInput) {
-        elementProps.onInput(e);
-      }
+      eventCallback(e);
     }
   };
   const eventCallback = (e) => {
-    const pKey = `on${e.type[0].toUpperCase()}${e.type.slice(1)}`;
+    const pKey = toEventName(e.type);
     const elementProps = e.target[$ElementPropsKey]
       ? e.target[$ElementPropsKey].memoizedProps
       : null;
+
     if (elementProps && elementProps[pKey]) {
       elementProps[pKey](e);
     }
@@ -327,35 +336,25 @@
       return document.createDocumentFragment();
     },
     toFirst(child, reference) {
-      if (isVNode(child)) {
-        reference.insertBefore(child.toFragment(), reference.firstChild);
-      } else {
-        reference.insertBefore(child, reference.firstChild);
-      }
+      reference.insertBefore(
+        isVNode(child) ? child.toFragment() : child,
+        reference.firstChild
+      );
     },
     toLast(child, reference) {
-      if (isVNode(child)) {
-        reference.appendChild(child.toFragment());
-      } else {
-        reference.appendChild(child);
-      }
+      reference.appendChild(isVNode(child) ? child.toFragment() : child);
     },
     toBefore(node, reference) {
-      if (isVNode(node)) {
-        reference.parentNode.insertBefore(node.toFragment(), reference);
-      } else {
-        reference.parentNode.insertBefore(node, reference);
-      }
+      reference.parentNode.insertBefore(
+        isVNode(node) ? node.toFragment() : node,
+        reference
+      );
     },
     toAfter(node, reference) {
-      if (isVNode(node)) {
-        reference.parentNode.insertBefore(
-          node.toFragment(),
-          reference.nextSibling
-        );
-      } else {
-        reference.parentNode.insertBefore(node, reference.nextSibling);
-      }
+      reference.parentNode.insertBefore(
+        isVNode(node) ? node.toFragment() : node,
+        reference.nextSibling
+      );
     },
     removeNode(node) {
       if (isVNode(node)) {
@@ -369,14 +368,13 @@
         parentNode.removeChild(endNode);
       } else {
         node.parentNode.removeChild(node);
-        node[$ElementPropsKey] = null;
       }
     },
     commitTextUpdate(node, content) {
       node.nodeValue = content;
     },
     commitInstanceUpdate(node, attrsMap) {
-      for (let [pKey, pValue] of attrsMap.entries()) {
+      for (const [pKey, pValue] of attrsMap) {
         if (pValue === SkipEventFunc) {
           continue;
         }
@@ -390,13 +388,11 @@
         if (pValue === void 0) {
           node.removeAttribute(attrName);
         } else if (attrName === "style") {
-          const styleValue = pValue;
-
-          if (isString(styleValue)) {
-            node.style.cssText = styleValue;
+          if (isString(pValue)) {
+            node.style.cssText = pValue;
           } else {
-            for (const key in styleValue) {
-              setStyle(node.style, key, styleValue[key]);
+            for (const key in pValue) {
+              setStyle(node.style, key, pValue[key]);
             }
           }
         } else {
@@ -404,18 +400,18 @@
         }
       }
     },
-    fixHostSpecial(node, fullEventName, callback) {
-      const eventName = fullEventName.slice(2).toLowerCase();
+    fixHostSpecial(node, eventName, callback) {
+      const eventType = eventName.slice(2).toLowerCase();
       const method =
         callback === void 0 ? "removeEventListener" : "addEventListener";
 
-      if (eventName === "input") {
+      if (eventType === "input") {
         node[method]("compositionstart", onCompositionStart);
         node[method]("compositionend", onCompositionEnd);
         node[method]("change", onCompositionEnd);
         node[method]("input", onInputFixed);
       } else {
-        node[method](eventName, eventCallback);
+        node[method](eventType, eventCallback);
       }
     },
     updateInstanceProps(node, fiber) {
@@ -446,7 +442,7 @@
       this.fg.appendChild(this.endNode);
     }
     toFragment() {
-      // 非首次渲染时
+      // 非首次渲染时, 将 startNode 和 endNode 之间的内容移动到 fg 中
       if (!this.fg.hasChildNodes()) {
         let current = this.startNode;
         while (current) {
@@ -462,8 +458,6 @@
       return this.fg;
     }
   }
-
-  /* #region-end 事件相关 */
 
   const hostConfig = domHostConfig;
 
@@ -659,7 +653,7 @@
 
   const toElement = (item) => {
     const itemType = typeof item;
-    if (item && itemType === "object" && item.type) {
+    if (item && itemType === "object" && item.$$typeof) {
       return item;
     } else if (itemType === "string" || itemType === "number") {
       return jsx("text", { content: item });
@@ -697,7 +691,6 @@
   };
   const unMarkMoved = (fiber) => {
     fiber.flags &= ~MovedFlag;
-    fiber.preReferFiber = void 0;
   };
   const isMarkMoved = (fiber) => fiber.flags & MovedFlag;
   const markRef = (fiber) => {
@@ -709,17 +702,14 @@
   };
   const isMarkChildDeletion = (fiber) => fiber.flags & ChildDeletionFlag;
 
-  const $HostText = Symbol.for("frei.HostText");
-  const $HostComponent = Symbol.for("frei.HostComponent");
-  const $FunctionComponent = Symbol.for("frei.FunctionComponent");
-
-  const resolvedPromise = Promise.resolve();
   const EmptyProps = {};
+  const resolved = Promise.resolve();
+  const nextTick = (callback) => resolved.then(callback);
+
   class Fiber {
     key = null;
     ref = null;
     type = null;
-    tagType = null;
     nodeKey = "";
     pendingProps = EmptyProps;
     memoizedProps = EmptyProps;
@@ -741,15 +731,18 @@
     isPortal = false;
     needRender = true;
 
+    isHostText = false;
+    isHostComponent = false;
+    isFunctionComponent = false;
+
     get normalChildren() {
-      if (this.tagType === $HostText) {
+      if (this.isHostText) {
         return null;
       }
 
-      const tempChildren =
-        this.tagType === $HostComponent
-          ? this.pendingProps.children
-          : genComponentInnerElement(this);
+      const tempChildren = this.isHostComponent
+        ? this.pendingProps.children
+        : genComponentInnerElement(this);
 
       if (tempChildren == void 0) {
         return null;
@@ -767,25 +760,30 @@
       this.pendingProps = element.props;
 
       if (this.type === "text") {
-        this.tagType = $HostText;
-        this.memoizedProps = this.pendingProps;
+        this.isHostText = true;
         this.stateNode = hostConfig.createTextInstance(
           this.pendingProps.content
         );
+
+        // 文本节点，创建时直接标记更新完
+        this.memoizedProps = this.pendingProps;
       } else if (isString(this.type)) {
-        this.tagType = $HostComponent;
+        this.isHostComponent = true;
         this.stateNode = hostConfig.createInstance(this.type);
+
+        // 常规元素，添加 $ElementPropsKey 属性指向 fiber, 用于事件委托 和 调试
         hostConfig.updateInstanceProps(this.stateNode, this);
       } else {
-        this.tagType = $FunctionComponent;
+        this.isFunctionComponent = true;
         this.stateNode = new VNode(this.nodeKey);
       }
     }
 
     rerender() {
+      // 同步执行中添加多次，只向渲染 mainQueueMacrotask 队列中添加一条
       if (!this.lock) {
         this.lock = true;
-        resolvedPromise.then(() => {
+        nextTick(() => {
           this.lock = false;
         });
         mainQueueMacrotask(incomingQueue.bind(null, this));
@@ -974,10 +972,12 @@
           preFiber.sibling = fiber;
         }
 
-        preFiber = fiber;
         if (!fiber.isPortal) {
           noPortalPreFiber = fiber;
         }
+
+        preFiber = fiber;
+
         fiber.memoizedProps = fiber.pendingProps;
       }
     }
@@ -1077,12 +1077,12 @@
       markRef(fiber);
     }
 
-    if (fiber.tagType === $HostText) {
+    if (fiber.isHostText) {
       if (!oldProps || newProps.content !== oldProps.content) {
         fiber.memoizedState = newProps.content;
         isNeedMarkUpdate = true;
       }
-    } else if (fiber.tagType === $HostComponent) {
+    } else if (fiber.isHostComponent) {
       if (fiber.memoizedState) {
         fiber.memoizedState.clear();
       } else {
@@ -1149,7 +1149,7 @@
     while (fiber) {
       if (fiber.__skip) {
         // 跳过不处理
-      } else if (fiber.tagType === $HostText) {
+      } else if (fiber.isHostText) {
         yield fiber;
       } else if (isSkipFiber(fiber)) {
         yield fiber;
@@ -1210,7 +1210,7 @@
   };
 
   const updateHostFiber = (fiber) => {
-    if (fiber.tagType === $HostText) {
+    if (fiber.isHostText) {
       hostConfig.commitTextUpdate(fiber.stateNode, fiber.memoizedState);
     } else {
       hostConfig.commitInstanceUpdate(fiber.stateNode, fiber.memoizedState);
@@ -1224,7 +1224,7 @@
       for (const f of walkFiberTree(fiber)) {
         markUnMount(f);
 
-        if (f.tagType === $FunctionComponent) {
+        if (f.isFunctionComponent) {
           dispatchHook(f, "onUnMounted", true);
         }
 
@@ -1236,14 +1236,14 @@
   };
 
   const commitRoot = (renderContext) => {
-    for (const fiber of renderContext.MutationQueue) {
-      const isHostFiber = fiber.tagType !== $FunctionComponent;
+    print("log", "MutationQueue Count: " + renderContext.MutationQueue.length);
 
+    for (const fiber of renderContext.MutationQueue) {
       if (isMarkChildDeletion(fiber)) {
         childDeletionFiber(fiber);
       }
 
-      if (isHostFiber) {
+      if (!fiber.isFunctionComponent) {
         if (isMarkUpdate(fiber)) {
           updateHostFiber(fiber);
         }
@@ -1284,11 +1284,9 @@
 
   const toCommit = (renderContext) => {
     commitRoot(renderContext);
-
     if (renderContext.restoreDataFn) {
       renderContext.restoreDataFn();
     }
-
     NoEqualPropMap.clear();
   };
 
@@ -1299,6 +1297,8 @@
     if (obj.done) {
       return toCommit.bind(null, renderContext);
     }
+
+    print("count", "Generator Fiber Count");
 
     if (current.flags !== NoFlags) {
       renderContext.MutationQueue.push(current);
@@ -1311,21 +1311,19 @@
   };
 
   const createRoot = (container) => {
-    const key = container.id || (Date.now() + Math.random()).toString(36);
+    const fiberKey = container.id || (Date.now() + Math.random()).toString(36);
+    const fiberType = container.tagName.toLowerCase();
 
-    Object.keys(eventTypeMap).forEach((eventType) => {
-      initEvent(container, eventType);
-    });
+    Object.keys(eventTypeMap).forEach((eventType) =>
+      initEvent(container, eventType)
+    );
 
     return {
-      render(element) {
+      render(jsx) {
         const rootFiber = createFiber(
-          {
-            type: container.tagName.toLowerCase(),
-            props: { children: element },
-          },
-          key,
-          key
+          { type: fiberType, props: { children: jsx } },
+          fiberKey,
+          `${fiberType}#${fiberKey}`
         );
 
         rootFiber.stateNode = container;
