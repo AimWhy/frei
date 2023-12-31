@@ -356,6 +356,18 @@
         reference.nextSibling
       );
     },
+    removeChildren(node) {
+      if (isVNode(node)) {
+        const startNode = node.startNode;
+        const endNode = node.endNode;
+        const parentNode = startNode.parentNode;
+        while (startNode.nextSibling !== endNode) {
+          parentNode.removeChild(startNode.nextSibling);
+        }
+      } else {
+        node.innerHTML = "";
+      }
+    },
     removeNode(node) {
       if (isVNode(node)) {
         const startNode = node.startNode;
@@ -794,6 +806,21 @@
         mainQueueMacrotask(incomingQueue.bind(null, this));
       }
     }
+
+    unMount() {
+      markUnMount(this);
+
+      if (this.isFunctionComponent) {
+        dispatchHook(this, "onUnMounted", true);
+      }
+
+      !this.isHostText && this.ref && this.ref(null);
+      this.stateNode = null;
+
+      for (const oldFiber of walkChildFiber(this)) {
+        oldFiber.unMount();
+      }
+    }
   }
 
   Fiber.genNodeKey = (element, pNodeKey = "", index) =>
@@ -823,7 +850,7 @@
 
       const renderContext = {
         MutationQueue: [],
-        gen: genFiberTree(fiber),
+        gen: genFiberTree2(fiber),
         restoreDataFn: hostConfig.genRestoreDataFn(),
       };
 
@@ -839,16 +866,6 @@
     }
   }
 
-  function* walkFiberTree(returnFiber, fn = noop) {
-    let fiber = returnFiber.child;
-    while (fiber) {
-      fn(fiber, returnFiber);
-      yield* walkFiberTree(fiber);
-      fiber = fiber.sibling;
-    }
-    yield returnFiber;
-  }
-
   const createFiber = (element, nodeKey, deletionMap) => {
     let fiber = deletionMap ? deletionMap.get(nodeKey) : null;
 
@@ -857,7 +874,7 @@
       fiber.sibling = null;
       fiber.return = null;
       fiber.__skip = false;
-      fiber.__lastDirty = false;
+      fiber.__isReuseFromMe = false;
       fiber.oldIndex = fiber.index;
       fiber.isPortal = !!fiber.pendingProps.__target;
       fiber.needRender = finishedWork(fiber, false);
@@ -906,16 +923,24 @@
 
   const beginWork = (returnFiber) => {
     if (!returnFiber.needRender) {
-      return;
+      return returnFiber.child;
     }
 
     let deletionMap = null;
     let hasOldChildFiber = false;
+    const children = returnFiber.normalChildren;
+
     if (!isMarkMount(returnFiber) && returnFiber.child) {
-      deletionMap = new Map();
       hasOldChildFiber = true;
-      for (const oldFiber of walkChildFiber(returnFiber)) {
-        deletionMap.set(oldFiber.nodeKey, oldFiber);
+
+      if (children && children.length) {
+        deletionMap = new Map();
+        for (const oldFiber of walkChildFiber(returnFiber)) {
+          deletionMap.set(oldFiber.nodeKey, oldFiber);
+        }
+      } else {
+        // 若移除所有子节点，则将 deletionMap 赋值为 旧的.child
+        deletionMap = returnFiber.child;
       }
     }
 
@@ -926,14 +951,13 @@
     const indexCount = hasOldChildFiber ? [] : null;
 
     let j = 0;
-    let lastDirtyFiber = null;
-    const children = returnFiber.normalChildren;
-
+    let childLen = NaN;
     if (children != null) {
       let preFiber = null;
       let noPortalPreFiber = null;
 
-      for (let index = 0; index < children.length; index++) {
+      childLen = children.length;
+      for (let index = 0; index < childLen; index++) {
         const element = children[index];
         const nodeKey = Fiber.genNodeKey(element, returnFiber.nodeKey, index);
         const fiber = createFiber(element, nodeKey, deletionMap);
@@ -942,7 +966,6 @@
 
         if (fiber.oldIndex === -1) {
           markMount(fiber, noPortalPreFiber);
-          lastDirtyFiber = fiber;
         } else if (hasOldChildFiber) {
           if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
             markMoved(fiber, noPortalPreFiber);
@@ -960,9 +983,6 @@
           } else {
             if (fiber.memoizedProps.__target !== fiber.pendingProps.__target) {
               markMoved(fiber, noPortalPreFiber);
-              lastDirtyFiber = fiber;
-            } else if (!isSkipFiber(fiber)) {
-              lastDirtyFiber = fiber;
             }
 
             // 从待删除 deletionMap 中移除此 nodeKey
@@ -971,7 +991,6 @@
         }
 
         if (index === 0) {
-          lastDirtyFiber = fiber;
           returnFiber.child = fiber;
         } else {
           preFiber.sibling = fiber;
@@ -989,8 +1008,10 @@
 
     // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
     // 所以需要再走一遍构建 increasing 的逻辑
+
     if (hasOldChildFiber) {
       let max = Math.max(...indexCount);
+      let reuseFromFiber = null;
 
       for (let i = reuseKeyList.length - 1; i > -1; i--) {
         const fiberKey = reuseKeyList[i];
@@ -1006,25 +1027,33 @@
 
         // 这里只考虑在 returnFiber 内部是否可以跳过
         if (isSkipFiber(fiber)) {
-          fiber.__skip = true;
-        } else {
-          if (lastDirtyFiber === null || fiber.index >= lastDirtyFiber.index) {
-            lastDirtyFiber = fiber;
+          if (
+            childLen - 1 === fiber.index ||
+            (reuseFromFiber && reuseFromFiber.index - 1 === fiber.index)
+          ) {
+            reuseFromFiber = fiber;
           }
+
+          fiber.__skip = true;
         }
 
         deletionMap.delete(fiberKey);
       }
+
+      if (reuseFromFiber) {
+        reuseFromFiber.__isReuseFromMe = true;
+      }
     }
 
-    if (lastDirtyFiber !== null) {
-      lastDirtyFiber.__lastDirty = true;
-    }
-
-    if (hasOldChildFiber && deletionMap.size) {
+    if (
+      hasOldChildFiber &&
+      (deletionMap instanceof Fiber || deletionMap.size)
+    ) {
       returnFiber.__deletion = deletionMap;
       markChildDeletion(returnFiber);
     }
+
+    return returnFiber.child;
   };
 
   const SkipEventFunc = noop;
@@ -1146,28 +1175,27 @@
     return hasTreeChange;
   };
 
-  function* genFiberTree(returnFiber) {
+  function* genFiberTree2(returnFiber) {
     beginWork(returnFiber);
+    const queue = [returnFiber];
+    let current = returnFiber.child;
 
-    let fiber = returnFiber.child;
-
-    while (fiber) {
-      if (fiber.__skip) {
-        // 跳过不处理
-      } else if (fiber.isHostText) {
-        yield fiber;
+    while (queue.length > 0) {
+      if (!current || current.__isReuseFromMe) {
+        current = queue.pop();
+        yield current;
+        current = current.sibling;
+      } else if (current.__skip) {
+        current = current.sibling;
+      } else if (current.isHostText) {
+        yield current;
+        current = current.sibling;
       } else {
-        yield* genFiberTree(fiber);
+        beginWork(current);
+        queue.push(current);
+        current = current.child;
       }
-
-      if (fiber.__lastDirty) {
-        break;
-      }
-
-      fiber = fiber.sibling;
     }
-
-    yield returnFiber;
   }
 
   const placementFiber = (fiber, isMount) => {
@@ -1221,20 +1249,22 @@
   };
 
   const childDeletionFiber = (returnFiber) => {
-    for (const fiber of returnFiber.__deletion.values()) {
-      hostConfig.removeNode(fiber.stateNode);
+    // __deletion 为 Fiber 类型时，代表删除 旧returnFiber 的所有子节点，__deletion 指向 旧的.child
+    if (returnFiber.__deletion instanceof Fiber) {
+      hostConfig.removeChildren(returnFiber.stateNode);
 
-      for (const f of walkFiberTree(fiber)) {
-        markUnMount(f);
-
-        if (f.isFunctionComponent) {
-          dispatchHook(f, "onUnMounted", true);
-        }
-
-        f.ref && f.ref(null);
-        f.stateNode = null;
+      let current = returnFiber.__deletion;
+      while (current) {
+        current.unMount();
+        current = current.sibling;
+      }
+    } else {
+      for (const fiber of returnFiber.__deletion.values()) {
+        hostConfig.removeNode(fiber.stateNode);
+        fiber.unMount();
       }
     }
+
     returnFiber.__deletion = null;
   };
 
