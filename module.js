@@ -879,11 +879,11 @@ const findParentFiber = (fiber, checker) => {
   }
 };
 
-const findIndex = (nodeKeyArr, fiber, fiberMap) => {
+const findIndex = (increasing, fiber) => {
   let i = 0;
-  let j = nodeKeyArr.length;
+  let j = increasing.length;
   let mid;
-  let tempFiber = fiberMap.get(nodeKeyArr[j - 1]);
+  let tempFiber = increasing[j - 1];
 
   // 如果仅更新内容，可以快速定位位置
   if (tempFiber && tempFiber.oldIndex < fiber.oldIndex) {
@@ -892,7 +892,7 @@ const findIndex = (nodeKeyArr, fiber, fiberMap) => {
 
   while (i !== j) {
     mid = Math.floor((i + j) / 2);
-    tempFiber = fiberMap.get(nodeKeyArr[mid]);
+    tempFiber = increasing[mid];
     if (tempFiber.oldIndex < fiber.oldIndex) {
       i = mid + 1;
     } else {
@@ -918,7 +918,7 @@ const beginWork = (returnFiber) => {
     hasOldChildFiber = true;
 
     if (childLength > 0) {
-      deletionMap = new Map();
+      deletionMap = returnFiber.__deletion || new Map();
       for (const oldFiber of walkChildFiber(returnFiber)) {
         deletionMap.set(oldFiber.nodeKey, oldFiber);
       }
@@ -957,12 +957,12 @@ const beginWork = (returnFiber) => {
           // 记录可能复用的 fiber，循环结束后再从 deletionMap 中移除
           reuseFiberList.push(fiber);
 
-          const i = findIndex(increasing, fiber, deletionMap);
+          const i = findIndex(increasing, fiber);
           if (i + 1 > increasing.length) {
-            increasing.push(nodeKey);
+            increasing.push(fiber);
             count = increasing.length;
           } else {
-            increasing[i] = nodeKey;
+            increasing[i] = fiber;
             count = i + 1;
           }
           indexCount[j++] = count;
@@ -1005,7 +1005,7 @@ const beginWork = (returnFiber) => {
 
       // 位置复用
       if (maxCount > 0 && indexCount[i] === maxCount) {
-        increasing[maxCount - 1] = fiberKey;
+        // increasing[maxCount - 1] = fiber;
         // 属于递增子序列里，取消标记位移
         unMarkMoved(fiber);
         maxCount--;
@@ -1238,14 +1238,14 @@ const childDeletionFiber = (returnFiber) => {
       current.unMount();
       current = current.sibling;
     }
+    returnFiber.__deletion = null;
   } else {
     for (const fiber of returnFiber.__deletion.values()) {
       hostConfig.removeNode(fiber.stateNode);
       fiber.unMount();
     }
+    returnFiber.__deletion.clear();
   }
-
-  returnFiber.__deletion = null;
 };
 
 const commitRoot = (renderContext) => {
