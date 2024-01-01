@@ -912,11 +912,12 @@ const beginWork = (returnFiber) => {
   let deletionMap = null;
   let hasOldChildFiber = false;
   const children = returnFiber.normalChildren;
+  const childLength = children ? children.length : 0;
 
   if (!isMarkMount(returnFiber) && returnFiber.child) {
     hasOldChildFiber = true;
 
-    if (children && children.length) {
+    if (childLength > 0) {
       deletionMap = new Map();
       for (const oldFiber of walkChildFiber(returnFiber)) {
         deletionMap.set(oldFiber.nodeKey, oldFiber);
@@ -929,18 +930,19 @@ const beginWork = (returnFiber) => {
 
   returnFiber.child = null;
 
-  const reuseKeyList = hasOldChildFiber ? [] : null;
+  const reuseFiberList = hasOldChildFiber ? [] : null;
   const increasing = hasOldChildFiber ? [] : null;
   const indexCount = hasOldChildFiber ? [] : null;
 
   let j = 0;
-  let childLen = NaN;
-  if (children != null) {
+  let count = 0;
+  let maxCount = 0;
+
+  if (childLength > 0) {
     let preFiber = null;
     let noPortalPreFiber = null;
 
-    childLen = children.length;
-    for (let index = 0; index < childLen; index++) {
+    for (let index = 0; index < childLength; index++) {
       const element = children[index];
       const nodeKey = Fiber.genNodeKey(element, returnFiber.nodeKey, index);
       const fiber = createFiber(element, nodeKey, deletionMap);
@@ -952,17 +954,19 @@ const beginWork = (returnFiber) => {
       } else if (hasOldChildFiber) {
         if (!fiber.memoizedProps.__target && !fiber.pendingProps.__target) {
           markMoved(fiber, noPortalPreFiber);
-          // 记录复用的 nodeKey，循环结束后再从 deletionMap 中移除
-          reuseKeyList.push(nodeKey);
+          // 记录可能复用的 fiber，循环结束后再从 deletionMap 中移除
+          reuseFiberList.push(fiber);
 
           const i = findIndex(increasing, fiber, deletionMap);
           if (i + 1 > increasing.length) {
             increasing.push(nodeKey);
-            indexCount[j++] = increasing.length;
+            count = increasing.length;
           } else {
             increasing[i] = nodeKey;
-            indexCount[j++] = i + 1;
+            count = i + 1;
           }
+          indexCount[j++] = count;
+          maxCount = maxCount > count ? maxCount : count;
         } else {
           if (fiber.memoizedProps.__target !== fiber.pendingProps.__target) {
             markMoved(fiber, noPortalPreFiber);
@@ -993,25 +997,24 @@ const beginWork = (returnFiber) => {
   // 所以需要再走一遍构建 increasing 的逻辑
 
   if (hasOldChildFiber) {
-    let max = Math.max(...indexCount);
     let reuseFromFiber = null;
 
-    for (let i = reuseKeyList.length - 1; i > -1; i--) {
-      const fiberKey = reuseKeyList[i];
-      const fiber = deletionMap.get(fiberKey);
+    for (let i = reuseFiberList.length - 1; i > -1; i--) {
+      const fiber = reuseFiberList[i];
+      const fiberKey = fiber.nodeKey;
 
       // 位置复用
-      if (max > 0 && indexCount[i] === max) {
-        increasing[max - 1] = fiberKey;
+      if (maxCount > 0 && indexCount[i] === maxCount) {
+        increasing[maxCount - 1] = fiberKey;
         // 属于递增子序列里，取消标记位移
         unMarkMoved(fiber);
-        max--;
+        maxCount--;
       }
 
       // 这里只考虑在 returnFiber 内部是否可以跳过
       if (isSkipFiber(fiber)) {
         if (
-          childLen - 1 === fiber.index ||
+          childLength - 1 === fiber.index ||
           (reuseFromFiber && reuseFromFiber.index - 1 === fiber.index)
         ) {
           reuseFromFiber = fiber;
@@ -1028,7 +1031,7 @@ const beginWork = (returnFiber) => {
     }
   }
 
-  if (hasOldChildFiber && (deletionMap instanceof Fiber || deletionMap.size)) {
+  if (hasOldChildFiber && (!(deletionMap instanceof Map) || deletionMap.size)) {
     returnFiber.__deletion = deletionMap;
     markChildDeletion(returnFiber);
   }
@@ -1227,7 +1230,7 @@ const updateHostFiber = (fiber) => {
 
 const childDeletionFiber = (returnFiber) => {
   // __deletion 为 Fiber 类型时，代表删除 旧returnFiber 的所有子节点，__deletion 指向 旧的.child
-  if (returnFiber.__deletion instanceof Fiber) {
+  if (!(returnFiber.__deletion instanceof Map)) {
     hostConfig.removeChildren(returnFiber.stateNode);
 
     let current = returnFiber.__deletion;
