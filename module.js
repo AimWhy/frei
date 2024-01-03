@@ -463,9 +463,11 @@ const domHostConfig = {
 
     // 重新定位焦点, 恢复选择位置
     return () => {
-      focusedElement.focus();
-      focusedElement.selectionStart = start;
-      focusedElement.selectionEnd = end;
+      if (focusedElement.isConnected) {
+        focusedElement.focus();
+        focusedElement.selectionStart = start;
+        focusedElement.selectionEnd = end;
+      }
     };
   },
 };
@@ -980,7 +982,7 @@ const beginWork = (returnFiber) => {
 
   const children = returnFiber.normalChildren;
   const childLength = children ? children.length : 0;
-  const newFiberKeySet = childLength > 0 ? new Set() : null;
+  const newFiberKeyArr = childLength > 0 ? Array(childLength) : null;
   const hasOldChildFiber = Boolean(
     !isMarkMount(returnFiber) && returnFiber.child
   );
@@ -991,7 +993,7 @@ const beginWork = (returnFiber) => {
       returnFiber.nodeKey,
       index
     );
-    newFiberKeySet.add(newNodeKey);
+    newFiberKeyArr[index] = newNodeKey;
   }
 
   let reuseFiberArr;
@@ -1006,7 +1008,7 @@ const beginWork = (returnFiber) => {
       deletionMap = returnFiber.__deletion || new Map();
 
       for (const oldFiber of walkChildFiber(returnFiber)) {
-        if (!newFiberKeySet.has(oldFiber.nodeKey)) {
+        if (!newFiberKeyArr.includes(oldFiber.nodeKey)) {
           deletionMap.set(oldFiber.nodeKey, oldFiber);
         } else {
           reuseFiberIndexMap.set(oldFiber.nodeKey, reuseFiberArr.length);
@@ -1037,11 +1039,10 @@ const beginWork = (returnFiber) => {
   if (childLength > 0) {
     let preFiber = null;
     let noPortalPreFiber = null;
-    const newFiberKeyGen = newFiberKeySet.values();
 
     for (let index = 0; index < childLength; index++) {
       const element = children[index];
-      const nodeKey = newFiberKeyGen.next().value;
+      const nodeKey = newFiberKeyArr[index];
       const oldFiber =
         hasReuseFiber && reuseFiberArr[reuseFiberIndexMap.get(nodeKey)];
 
@@ -1379,10 +1380,11 @@ const commitRoot = (renderContext) => {
 
 const toCommit = (renderContext) => {
   commitRoot(renderContext);
-  if (renderContext.restoreDataFn) {
-    renderContext.restoreDataFn();
-  }
   NoEqualPropMap.clear();
+
+  if (renderContext.restoreDataFn) {
+    return renderContext.restoreDataFn;
+  }
 };
 
 const innerRender = (renderContext) => {
