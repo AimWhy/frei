@@ -97,10 +97,11 @@ createRoot(document.querySelector("#app")).render(<App />);
 
 # benchmark history
 
- ![Screenshot 2023-11-12 at 7 22 44 PM](https://user-images.githubusercontent.com/3374055/282318144-d26961cc-de14-44e7-9741-3b2954447f6b.png)
- ![Screenshot 2023-11-18 at 2 35 42 PM](https://user-images.githubusercontent.com/3374055/284001902-b8eea901-dd60-4801-84bf-674164332377.png)
- ![Screenshot 2023-11-19 at 9 21 40 PM](https://user-images.githubusercontent.com/3374055/284088116-2eddc2c7-11ff-43c7-a0ee-60cbb4447ac6.png)
- 
+ ![Screenshot 2023-11-12 at 7 22 44 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-9.png)
+ ![Screenshot 2023-11-18 at 2 35 42 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-13.png)
+ ![Screenshot 2023-11-19 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-16.png)
+ ![Screenshot 2023-12-30 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-30.png)
+
 
 # Thanks @krausest 
 
