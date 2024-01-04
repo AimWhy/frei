@@ -101,6 +101,7 @@ createRoot(document.querySelector("#app")).render(<App />);
  ![Screenshot 2023-11-18 at 2 35 42 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-13.png)
  ![Screenshot 2023-11-19 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-16.png)
  ![Screenshot 2023-12-30 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-30.png)
+ ![Screenshot 2024-01-04 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-36.png)
 
 
 # Thanks @krausest 
