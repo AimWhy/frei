@@ -1,4 +1,4 @@
-import { createRoot, useReducer } from "../module";
+import { createRoot, useEffect, useReducer } from "../module";
 
 const random = (max) => Math.round(Math.random() * 1000) % max;
 
@@ -126,72 +126,88 @@ const listReducer = (state, action) => {
   }
 };
 
-const Row = ({ selected, item, dispatch }) => (
-  <tr className={selected ? "danger" : ""}>
-    <td className="col-md-1">{item.id}</td>
-    <td className="col-md-4">
-      <a onClick={() => dispatch({ type: "SELECT", id: item.id })}>
-        {item.label}
-      </a>
-    </td>
+const Row = ({ selected, item, dispatch }) => {
+  let ref;
+  if (item.id % 1000 == 1) {
+    useEffect(() => {
+      console.log(1);
+      return () => {
+        console.log(101);
+      };
+    }, [])
+  }
+  if (item.id == "3") {
+    ref = (v) => {
+      window.wi = v;
+    };
+  }
+  return (
+    <tr className={selected ? "danger" : ""} ref={ref}>
+      <td className="col-md-1">{item.id}</td>
+      <td className="col-md-4">
+        <a onClick={() => dispatch({ type: "SELECT", id: item.id })}>
+          {item.label}
+        </a>
+      </td>
 
-    <td className="col-md-4">
-      <a>静态节点</a>
-      <div className="fdsa">
-        <span>
-          <i>33333</i>
-        </span>
-        <div>
-          sdf
-          <div>
-            <div>
-              dfdf
-              <div>
-                <div>sdf eee</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </td>
-    <td className="col-md-4">
-      <a>{item.label}</a>
-      <div className="feeee">
-        <div>
-          <i>离开家了</i>
-        </div>
-        <div className="abc">
+      <td className="col-md-4">
+        <a>静态节点</a>
+        <div className="fdsa">
           <span>
-            <i>流口水接待来访</i>
+            <i>33333</i>
           </span>
           <div>
+            sdf
             <div>
               <div>
+                dfdf
                 <div>
-                  <i>吉林省快递发了</i>
+                  <div>sdf eee</div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </td>
-    <td className="col-md-4">
-      <a>{item.label}</a>
-      <div className="abc">
-        <span>
-          <i>是弟弟水电费</i>
-        </span>
-      </div>
-    </td>
+      </td>
+      <td className="col-md-4">
+        <a>{item.label}</a>
+        <div className="feeee">
+          <div>
+            <i>离开家了</i>
+          </div>
+          <div className="abc">
+            <span>
+              <i>流口水接待来访</i>
+            </span>
+            <div>
+              <div>
+                <div>
+                  <div>
+                    <i>吉林省快递发了</i>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="col-md-4">
+        <a>{item.label}</a>
+        <div className="abc">
+          <span>
+            <i>是弟弟水电费</i>
+          </span>
+        </div>
+      </td>
 
-    <td className="col-md-1">
-      <button onClick={() => dispatch({ type: "REMOVE", id: item.id })}>
-        <div>删除</div>
-      </button>
-    </td>
-  </tr>
-);
+      <td className="col-md-1">
+        <button onClick={() => dispatch({ type: "REMOVE", id: item.id })}>
+          <div>删除</div>
+        </button>
+      </td>
+    </tr>
+  );
+};
 
 const Button = ({ id, cb, title }) => (
   <div className="col-sm-6 smallpad">

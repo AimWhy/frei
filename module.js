@@ -12,7 +12,7 @@ const FiberPools = new Map();
 function reuseFiber(element, nodeKey) {
   const fiberType = element.type;
 
-  if (FiberPools.has(fiberType)) {
+  if (FiberPools.size && FiberPools.has(fiberType)) {
     const pool = FiberPools.get(fiberType);
     if (!pool.length) {
       return null;
@@ -508,8 +508,11 @@ const hostConfig = domHostConfig;
 
 let workInProgress = null;
 export const useFiber = (isInitHook) => {
-  if (isInitHook && !workInProgress.hookQueue) {
-    workInProgress.hookQueue = [];
+  if (isInitHook) {
+    workInProgress.unmountFlags |= EffectFlag;
+    if (!workInProgress.hookQueue) {
+      workInProgress.hookQueue = [];
+    }
   }
   return workInProgress;
 };
@@ -754,6 +757,23 @@ const EmptyProps = {};
 const resolved = Promise.resolve();
 const nextTick = (callback) => resolved.then(callback);
 
+const EffectFlag = 1 << 0;
+
+function bubbleUnmountFlags(fiber) {
+  let subtreeFlags = NoFlags;
+  let child = fiber.child;
+
+  while (child !== null) {
+    subtreeFlags |= child.subtreeFlags;
+    subtreeFlags |= child.unmountFlags;
+
+    child.return = fiber;
+    child = child.sibling;
+  }
+
+  fiber.subtreeFlags |= subtreeFlags;
+}
+
 class Fiber {
   ref = null;
   type = null;
@@ -766,6 +786,7 @@ class Fiber {
 
   index = -1;
   oldIndex = -1;
+  childrenLength = 0;
   __deletion = null;
   stateNode = null;
   preReferFiber = null;
@@ -775,6 +796,8 @@ class Fiber {
   sibling = null;
 
   flags = MountFlag;
+  subtreeFlags = NoFlags;
+  unmountFlags = NoFlags;
   isPortal = false;
   needRender = true;
 
@@ -842,18 +865,27 @@ class Fiber {
   }
 
   unMount(isRecycle) {
-    for (const oldFiber of walkChildFiber(this)) {
-      oldFiber.unMount();
+    if (this.subtreeFlags) {
+      for (const oldFiber of walkChildFiber(this)) {
+        oldFiber.unMount();
+      }
     }
 
-    if (this.isFunctionComponent) {
+    if (this.isFunctionComponent && this.unmountFlags & EffectFlag) {
       dispatchHook(this, "onUnMounted");
+      this.hookQueue.length = 0;
+      Fiber.initLifecycle(this, true);
     }
-    this.ref && this.ref(null);
+
+    if (this.unmountFlags & RefFlag) {
+      this.ref && this.ref(null);
+    }
 
     if (isRecycle) {
       recycleFiber(this);
     }
+
+    this.unmountFlags = this.subtreeFlags = NoFlags;
   }
 }
 
@@ -862,13 +894,22 @@ Fiber.genNodeKey = (element, pNodeKey = "", index) =>
     element.key != null ? element.key : index
   }`;
 
-Fiber.initLifecycle = (fiber) => {
-  fiber.onMounted = new Set();
-  fiber.onUnMounted = new Set();
-  fiber.onUpdated = new Set();
-  fiber.onBeforeUpdate = new Set();
-  fiber.onBeforeMove = new Set();
-  fiber.onMoved = new Set();
+Fiber.initLifecycle = (fiber, isUnmount) => {
+  if (isUnmount) {
+    fiber.onMounted.clear();
+    fiber.onUnMounted.clear();
+    fiber.onUpdated.clear();
+    fiber.onBeforeUpdate.clear();
+    fiber.onBeforeMove.clear();
+    fiber.onMoved.clear();
+  } else {
+    fiber.onMounted = new Set();
+    fiber.onUnMounted = new Set();
+    fiber.onUpdated = new Set();
+    fiber.onBeforeUpdate = new Set();
+    fiber.onBeforeMove = new Set();
+    fiber.onMoved = new Set();
+  }
 };
 
 const runUpdate = (fn) => fn();
@@ -910,7 +951,7 @@ const createFiber = (element, nodeKey, oldFiber) => {
     fiber = reuseFiber(element, nodeKey);
     // 缓存池中取到的 fiber，重置数据属性
     if (fiber) {
-      fiber.flags = NoFlags
+      fiber.flags = NoFlags;
       fiber.nodeKey = nodeKey;
       fiber.__deletion = null;
       fiber.oldIndex = -1;
@@ -983,7 +1024,9 @@ const beginWork = (returnFiber) => {
 
   const children = returnFiber.normalChildren;
   const childLength = children ? children.length : 0;
-  const newFiberKeyMap = childLength > 0 ? new Map() : null;
+  const newFiberKeyMap = childLength > 0 ? Object.create(null) : null;
+  const newFiberArr = childLength > 0 ? Array(childLength) : null;
+
   const hasOldChildFiber = Boolean(
     !isMarkMount(returnFiber) && returnFiber.child
   );
@@ -994,7 +1037,8 @@ const beginWork = (returnFiber) => {
       returnFiber.nodeKey,
       index
     );
-    newFiberKeyMap.set(newNodeKey, null);
+    newFiberKeyMap[newNodeKey] = index;
+    newFiberArr[index] = newNodeKey;
   }
 
   let reuseFiberArr;
@@ -1005,8 +1049,9 @@ const beginWork = (returnFiber) => {
       const deletionArr = [];
 
       for (const oldFiber of walkChildFiber(returnFiber)) {
-        if (newFiberKeyMap.has(oldFiber.nodeKey)) {
-          newFiberKeyMap.set(oldFiber.nodeKey, oldFiber);
+        const index = newFiberKeyMap[oldFiber.nodeKey];
+        if (index !== void 0) {
+          newFiberArr[index] = oldFiber;
           reuseFiberArr.push(oldFiber);
         } else {
           deletionArr.push(oldFiber);
@@ -1039,7 +1084,11 @@ const beginWork = (returnFiber) => {
     let noPortalPreFiber = null;
     let index = 0;
 
-    for (const [nodeKey, oldFiber] of newFiberKeyMap.entries()) {
+    for (const fiberOrKey of newFiberArr) {
+      const isKey = isString(fiberOrKey);
+      const nodeKey = isKey ? fiberOrKey : fiberOrKey.nodeKey;
+      const oldFiber = isKey ? null : fiberOrKey;
+
       const fiber = createFiber(children[index], nodeKey, oldFiber);
 
       fiber.index = index;
@@ -1082,6 +1131,8 @@ const beginWork = (returnFiber) => {
 
       fiber.memoizedProps = fiber.pendingProps;
     }
+
+    returnFiber.childrenLength = index;
   }
 
   // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
@@ -1173,6 +1224,7 @@ const finishedWork = (fiber, isMount) => {
       }
     };
 
+    fiber.unmountFlags |= EffectFlag;
     markRef(fiber);
   }
 
@@ -1245,6 +1297,7 @@ function* genFiberTree2(returnFiber) {
   while (queue.length > 0) {
     if (!current || current.__isReuseFromMe) {
       current = queue.pop();
+      bubbleUnmountFlags(current);
       yield current;
       current = current.sibling;
     } else if (current.__skip) {
