@@ -8,7 +8,7 @@
       factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
-
+  
   const jsx = (type, props = {}, key = null) => ({
     key,
     type,
@@ -100,7 +100,7 @@
       const o2 = object2[key];
 
       if (isDeep) {
-        if (!objectEqual(o1, o2, isDeep)) {
+        if (o1 !== o2 && !objectEqual(o1, o2, isDeep)) {
           isDeep(object1, object2);
           return false;
         }
@@ -119,14 +119,14 @@
     NoEqualPropMap.set(a, b);
   };
 
-  const propsEqual = (props1, props2) => {
+  const propsEqual = (props1, props2, isElement = false) => {
     if (
       props1 != null &&
       typeof props1 === "object" &&
       NoEqualPropMap.has(props1) &&
       NoEqualPropMap.get(props1) === props2
     ) {
-      print("count", "Equal Reuse Count");
+      print("log", "Equal Reuse Count", props1, isElement);
       return false;
     }
 
@@ -781,8 +781,6 @@
     while (child !== null) {
       subtreeFlags |= child.subtreeFlags;
       subtreeFlags |= child.unmountFlags;
-
-      child.return = fiber;
       child = child.sibling;
     }
 
@@ -791,6 +789,7 @@
 
   class Fiber {
     ref = null;
+    key = null;
     type = null;
     nodeKey = "";
     pendingProps = EmptyProps;
@@ -846,6 +845,7 @@
     constructor(element, nodeKey) {
       this.nodeKey = nodeKey;
       this.type = element.type;
+      this.key = element.key;
       this.pendingProps = element.props;
 
       if (this.type === "text") {
@@ -906,10 +906,15 @@
     }
   }
 
-  Fiber.genNodeKey = (element, pNodeKey = "", index) =>
+  Fiber.genNodeKey = (element, index) =>
     `${isString(element.type) ? element.type : element.type.name}#${
       element.key != null ? element.key : index
     }`;
+  Fiber.isReuseFiber = (fiber, element, index) =>
+    fiber.type === element.type &&
+    (fiber.key != null
+      ? fiber.key === element.key
+      : element.key == null && fiber.index === index);
 
   Fiber.initLifecycle = (fiber, isUnmount) => {
     if (isUnmount) {
@@ -968,6 +973,7 @@
       fiber = reuseFiber(element, nodeKey);
       // 缓存池中取到的 fiber，重置数据属性
       if (fiber) {
+        fiber.key = element.key;
         fiber.flags = NoFlags;
         fiber.nodeKey = nodeKey;
         fiber.__deletion = null;
@@ -1034,6 +1040,12 @@
 
   const isSkipFiber = (f) => !f.needRender && f.flags === NoFlags;
 
+  const fillFiberKeyMap = (fiberKeyMap, fiberArray, startIndex) => {
+    for (let i = startIndex; i < fiberArray.length; i++) {
+      fiberKeyMap[fiberArray[i]] = i;
+    }
+  };
+
   const beginWork = (returnFiber) => {
     if (!returnFiber.needRender) {
       return returnFiber.child;
@@ -1049,12 +1061,7 @@
     );
 
     for (let index = 0; index < childLength; index++) {
-      const newNodeKey = Fiber.genNodeKey(
-        children[index],
-        returnFiber.nodeKey,
-        index
-      );
-      newFiberKeyMap[newNodeKey] = index;
+      const newNodeKey = Fiber.genNodeKey(children[index], index);
       newFiberArr[index] = newNodeKey;
     }
 
@@ -1064,8 +1071,24 @@
         reuseFiberArr = [];
 
         const deletionArr = [];
+        let startIndex = 0;
+        let isNeedRecordNodeKey = false;
 
         for (const oldFiber of walkChildFiber(returnFiber)) {
+          if (!isNeedRecordNodeKey && startIndex < childLength) {
+            if (
+              Fiber.isReuseFiber(oldFiber, children[startIndex], startIndex)
+            ) {
+              newFiberArr[startIndex] = oldFiber;
+              reuseFiberArr.push(oldFiber);
+              startIndex++;
+              continue;
+            } else {
+              isNeedRecordNodeKey = true;
+              fillFiberKeyMap(newFiberKeyMap, newFiberArr, startIndex);
+            }
+          }
+
           const index = newFiberKeyMap[oldFiber.nodeKey];
           if (index !== void 0) {
             newFiberArr[index] = oldFiber;
@@ -1294,7 +1317,7 @@
         isNeedMarkUpdate = true;
       }
 
-      hasTreeChange ||= !propsEqual(oldProps.children, newProps.children);
+      hasTreeChange ||= !propsEqual(oldProps.children, newProps.children, true);
     } else {
       if (fiber.needRender || !propsEqual(oldProps, newProps)) {
         isNeedMarkUpdate = true;
