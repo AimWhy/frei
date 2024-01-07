@@ -8,7 +8,7 @@
       factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
-  
+
   const jsx = (type, props = {}, key = null) => ({
     key,
     type,
@@ -1345,7 +1345,7 @@
         current = current.sibling;
       } else if (current.__skip) {
         current = current.sibling;
-      } else if (current.isHostText) {
+      } else if (current.isHostText || !current.needRender) {
         yield current;
         current = current.sibling;
       } else {

@@ -1323,7 +1323,7 @@ function* genFiberTree2(returnFiber) {
       current = current.sibling;
     } else if (current.__skip) {
       current = current.sibling;
-    } else if (current.isHostText) {
+    } else if (current.isHostText || !current.needRender) {
       yield current;
       current = current.sibling;
     } else {
