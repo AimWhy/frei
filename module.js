@@ -406,8 +406,11 @@ const domHostConfig = {
   commitTextUpdate(node, content) {
     node.nodeValue = content;
   },
-  commitInstanceUpdate(node, attrsMap) {
-    for (const [pKey, pValue] of attrsMap) {
+  commitInstanceUpdate(node, attrArr) {
+    for (let i = 0; i < attrArr.length; i = i + 2) {
+      const pKey = attrArr[i];
+      const pValue = attrArr[i + 1];
+
       if (pValue === SkipEventFunc) {
         continue;
       }
@@ -1194,32 +1197,6 @@ const beginWork = (returnFiber) => {
 };
 
 const SkipEventFunc = noop;
-const fillNewAttrMap = (attrMap, props) => {
-  for (const pKey in props) {
-    let pValue = props[pKey];
-
-    if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
-      continue;
-    }
-
-    if (testHostSpecialAttr(pKey)) {
-      if (hostSpecialAttrSet.has(pKey)) {
-        attrMap.set(pKey, pValue);
-      } else {
-        attrMap.set(pKey, SkipEventFunc);
-      }
-      continue;
-    }
-
-    const isBooleanAttr = isSpecialBooleanAttr(pKey);
-    if (pValue == null || (isBooleanAttr && !includeBooleanAttr(pValue))) {
-      pValue = void 0;
-    } else {
-      pValue = isBooleanAttr ? "" : pValue;
-    }
-    attrMap.set(pKey, props[pKey]);
-  }
-};
 
 const finishedWork = (fiber, isMount) => {
   const oldProps = fiber.memoizedProps;
@@ -1255,45 +1232,61 @@ const finishedWork = (fiber, isMount) => {
       isNeedMarkUpdate = true;
     }
   } else if (fiber.isHostComponent) {
-    if (fiber.memoizedState) {
-      fiber.memoizedState.clear();
-    } else {
-      fiber.memoizedState = new Map();
-    }
+    const unionProps = { ...oldProps, ...newProps };
+    const result = [];
 
-    const newAttrMap = fiber.memoizedState;
-    fillNewAttrMap(newAttrMap, newProps);
-
-    if (!isMount) {
-      for (const pKey in oldProps) {
-        if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
-          continue;
-        }
-
-        if (newAttrMap.has(pKey)) {
-          const oldPValue = oldProps[pKey];
-          const newPValue = newAttrMap.get(pKey);
-
-          if (testHostSpecialAttr(pKey)) {
-            if (isFunction(newPValue) ^ isFunction(oldPValue)) {
-              newAttrMap.set(pKey, isFunction(newPValue) ? newPValue : void 0);
-            } else {
-              newAttrMap.delete(pKey);
-            }
-          } else {
-            if (objectEqual(newPValue, oldPValue, noop)) {
-              newAttrMap.delete(pKey);
-            }
-          }
-          continue;
-        }
-
-        newAttrMap.delete(pKey);
+    for (const pKey in unionProps) {
+      if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
+        continue;
       }
-      isNeedMarkUpdate = !!fiber.memoizedState.size;
-    } else {
-      isNeedMarkUpdate = true;
+
+      let newValue = newProps[pKey];
+      let oldValue = oldProps[pKey];
+
+      if (testHostSpecialAttr(pKey)) {
+        const isFun = isFunction(newValue);
+
+        if (isFun ^ isFunction(oldValue)) {
+          if (isFun) {
+            result.push(
+              pKey,
+              hostSpecialAttrSet.has(pKey) ? newValue : SkipEventFunc
+            );
+          } else {
+            result.push(pKey, void 0);
+          }
+        }
+        continue;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(newProps, pKey)) {
+        if (oldValue !== void 0) {
+          result.push(pKey, void 0);
+        }
+        continue;
+      }
+
+      const isBooleanAttr = isSpecialBooleanAttr(pKey);
+      if (
+        newValue == null ||
+        (isBooleanAttr && !includeBooleanAttr(newValue))
+      ) {
+        newValue = void 0;
+      } else {
+        newValue = isBooleanAttr ? "" : newValue;
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(oldProps, pKey)) {
+        result.push(pKey, newValue);
+      } else {
+        if (!objectEqual(newValue, oldValue, noop)) {
+          result.push(pKey, newValue);
+        }
+      }
     }
+
+    isNeedMarkUpdate = isMount ? true : result.length > 0;
+    fiber.memoizedState = result;
 
     hasTreeChange ||= !propsEqual(oldProps.children, newProps.children, true);
   } else {
