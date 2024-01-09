@@ -12,30 +12,35 @@ const FiberPools = new Map();
 function reuseFiber(element, nodeKey) {
   const fiberType = element.type;
 
-  if (FiberPools.size && FiberPools.has(fiberType)) {
-    const pool = FiberPools.get(fiberType);
-    if (!pool.length) {
-      return null;
-    }
-
-    const result = pool.pop();
-    unMarkUnMount(result);
-    if (result.isFunctionComponent) {
-      result.stateNode.reset(nodeKey);
-    }
-    return result;
-  }
-  return null;
-}
-
-function recycleFiber(fiber) {
-  const fiberType = fiber.type;
-
   if (!FiberPools.has(fiberType)) {
-    FiberPools.set(fiberType, []);
+    return null;
   }
 
   const pool = FiberPools.get(fiberType);
+  if (!pool.length) {
+    return null;
+  }
+
+  const result = pool.pop();
+  unMarkUnMount(result);
+
+  if (result.isFunctionComponent) {
+    result.stateNode.reset(nodeKey);
+  }
+
+  return result;
+}
+
+function recycleFiber(fiber) {
+  let pool;
+  const fiberType = fiber.type;
+
+  if (!FiberPools.has(fiberType)) {
+    pool = [];
+    FiberPools.set(fiberType, pool);
+  } else {
+    pool = FiberPools.get(fiberType);
+  }
 
   markUnMount(fiber);
   pool.push(fiber);
@@ -43,8 +48,8 @@ function recycleFiber(fiber) {
 
 const noop = (_) => _;
 const isArray = (val) => Array.isArray(val);
-const isString = (val) => typeof val === "string";
-const isFunction = (val) => typeof val === "function";
+const isString = (val) => "string" === typeof val;
+const isFunction = (val) => "function" === typeof val;
 const print = (method, ...args) => {
   if (false) {
     console[method](...args);
@@ -59,8 +64,8 @@ const objectEqual = (object1, object2, isDeep) => {
   if (
     object1 === null ||
     object2 === null ||
-    typeof object1 !== "object" ||
-    typeof object2 !== "object"
+    "object" !== typeof object1 ||
+    "object" !== typeof object2
   ) {
     return false;
   }
@@ -111,7 +116,7 @@ const addNoEqualProp = (a, b) => {
 const propsEqual = (props1, props2, isElement = false) => {
   if (
     props1 != null &&
-    typeof props1 === "object" &&
+    "object" === typeof props1 &&
     NoEqualPropMap.has(props1) &&
     NoEqualPropMap.get(props1) === props2
   ) {
@@ -763,16 +768,11 @@ const nextTick = (callback) => resolved.then(callback);
 const EffectFlag = 1 << 0;
 
 function bubbleUnmountFlags(fiber) {
-  let subtreeFlags = NoFlags;
-  let child = fiber.child;
-
-  while (child !== null) {
-    subtreeFlags |= child.subtreeFlags;
-    subtreeFlags |= child.unmountFlags;
-    child = child.sibling;
+  const returnFiber = fiber.return;
+  if (returnFiber) {
+    returnFiber.subtreeFlags |= fiber.subtreeFlags;
+    returnFiber.subtreeFlags |= fiber.unmountFlags;
   }
-
-  fiber.subtreeFlags |= subtreeFlags;
 }
 
 class Fiber {
@@ -1026,9 +1026,11 @@ const findIndex = (increasing, fiber) => {
 
 const isSkipFiber = (f) => !f.needRender && f.flags === NoFlags;
 
-const fillFiberKeyMap = (fiberKeyMap, fiberArray, startIndex) => {
+const fillFiberKeyMap = (fiberKeyMap, fiberArray, startIndex, children) => {
   for (let i = startIndex; i < fiberArray.length; i++) {
-    fiberKeyMap[fiberArray[i]] = i;
+    const newNodeKey = Fiber.genNodeKey(children[i], i);
+    fiberArray[i] = newNodeKey;
+    fiberKeyMap[newNodeKey] = i;
   }
 };
 
@@ -1042,17 +1044,8 @@ const beginWork = (returnFiber) => {
   const newFiberKeyMap = childLength > 0 ? Object.create(null) : null;
   const newFiberArr = childLength > 0 ? Array(childLength) : null;
 
-  const hasOldChildFiber = Boolean(
-    !isMarkMount(returnFiber) && returnFiber.child
-  );
-
-  for (let index = 0; index < childLength; index++) {
-    const newNodeKey = Fiber.genNodeKey(children[index], index);
-    newFiberArr[index] = newNodeKey;
-  }
-
   let reuseFiberArr;
-  if (hasOldChildFiber) {
+  if (!isMarkMount(returnFiber) && returnFiber.child) {
     if (childLength > 0) {
       reuseFiberArr = [];
 
@@ -1069,7 +1062,7 @@ const beginWork = (returnFiber) => {
             continue;
           } else {
             isNeedRecordNodeKey = true;
-            fillFiberKeyMap(newFiberKeyMap, newFiberArr, startIndex);
+            fillFiberKeyMap(newFiberKeyMap, newFiberArr, startIndex, children);
           }
         }
 
@@ -1090,6 +1083,11 @@ const beginWork = (returnFiber) => {
 
     if (returnFiber.__deletion) {
       childDeletionFiber(returnFiber);
+    }
+  } else {
+    for (let index = 0; index < childLength; index++) {
+      const newNodeKey = Fiber.genNodeKey(children[index], index);
+      newFiberArr[index] = newNodeKey;
     }
   }
 
@@ -1222,7 +1220,7 @@ const finishedWork = (fiber, isMount) => {
       }
     };
 
-    fiber.unmountFlags |= EffectFlag;
+    fiber.unmountFlags |= RefFlag;
     markRef(fiber);
   }
 
@@ -1232,7 +1230,8 @@ const finishedWork = (fiber, isMount) => {
       isNeedMarkUpdate = true;
     }
   } else if (fiber.isHostComponent) {
-    const unionProps = { ...oldProps, ...newProps };
+    const unionProps =
+      oldProps === EmptyProps ? newProps : { ...oldProps, ...newProps };
     const result = [];
 
     for (const pKey in unionProps) {
@@ -1311,7 +1310,6 @@ function* genFiberTree2(returnFiber) {
   while (queue.length > 0) {
     if (!current || current.__isReuseFromMe) {
       current = queue.pop();
-      bubbleUnmountFlags(current);
       yield current;
       current = current.sibling;
     } else if (current.__skip) {
@@ -1461,6 +1459,7 @@ const innerRender = (renderContext) => {
   print("count", "Generator Fiber Count");
 
   if (current.flags !== NoFlags) {
+    bubbleUnmountFlags(current);
     renderContext.MutationQueue.push(current);
   } else {
     current.flags = NoFlags;
