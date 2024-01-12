@@ -516,11 +516,8 @@ const hostConfig = domHostConfig;
 
 let workInProgress = null;
 export const useFiber = (isInitHook) => {
-  if (isInitHook) {
-    workInProgress.unmountFlags |= EffectFlag;
-    if (!workInProgress.hookQueue) {
-      workInProgress.hookQueue = [];
-    }
+  if (isInitHook && !workInProgress.hookQueue) {
+    workInProgress.hookQueue = [];
   }
   return workInProgress;
 };
@@ -767,14 +764,6 @@ const nextTick = (callback) => resolved.then(callback);
 
 const EffectFlag = 1 << 0;
 
-function bubbleUnmountFlags(fiber) {
-  const returnFiber = fiber.return;
-  if (returnFiber) {
-    returnFiber.subtreeFlags |= fiber.subtreeFlags;
-    returnFiber.subtreeFlags |= fiber.unmountFlags;
-  }
-}
-
 class Fiber {
   ref = null;
   key = null;
@@ -798,8 +787,6 @@ class Fiber {
   sibling = null;
 
   flags = MountFlag;
-  subtreeFlags = NoFlags;
-  unmountFlags = NoFlags;
   isPortal = false;
   needRender = true;
 
@@ -868,27 +855,27 @@ class Fiber {
   }
 
   unMount(isRecycle) {
-    if (this.subtreeFlags) {
-      for (const oldFiber of walkChildFiber(this)) {
+    for (const oldFiber of walkChildFiber(this)) {
+      if (!oldFiber.isHostText) {
         oldFiber.unMount();
       }
     }
 
-    if (this.isFunctionComponent && this.unmountFlags & EffectFlag) {
-      dispatchHook(this, "onUnMounted");
-      this.hookQueue.length = 0;
-      Fiber.initLifecycle(this, true);
+    if (this.isFunctionComponent) {
+      if (this.hookQueue) {
+        this.hookQueue.length = 0;
+      }
+      if (this.onMounted) {
+        dispatchHook(this, "onUnMounted");
+        Fiber.initLifecycle(this, true);
+      }
     }
 
-    if (this.unmountFlags & RefFlag) {
-      this.ref && this.ref(null);
-    }
+    this.ref && this.ref(null);
 
     if (isRecycle) {
       recycleFiber(this);
     }
-
-    this.unmountFlags = this.subtreeFlags = NoFlags;
   }
 }
 
@@ -1043,6 +1030,7 @@ const beginWork = (returnFiber) => {
   const childLength = children ? children.length : 0;
   const newFiberKeyMap = childLength > 0 ? Object.create(null) : null;
   const newFiberArr = childLength > 0 ? Array(childLength) : null;
+  let startIndex = 0;
 
   let reuseFiberArr;
   if (!isMarkMount(returnFiber) && returnFiber.child) {
@@ -1050,7 +1038,6 @@ const beginWork = (returnFiber) => {
       reuseFiberArr = [];
 
       const deletionArr = [];
-      let startIndex = 0;
       let isNeedRecordNodeKey = false;
 
       for (const oldFiber of walkChildFiber(returnFiber)) {
@@ -1084,11 +1071,11 @@ const beginWork = (returnFiber) => {
     if (returnFiber.__deletion) {
       childDeletionFiber(returnFiber);
     }
-  } else {
-    for (let index = 0; index < childLength; index++) {
-      const newNodeKey = Fiber.genNodeKey(children[index], index);
-      newFiberArr[index] = newNodeKey;
-    }
+  }
+
+  for (let index = startIndex; index < childLength; index++) {
+    const newNodeKey = Fiber.genNodeKey(children[index], index);
+    newFiberArr[index] = newNodeKey;
   }
 
   returnFiber.child = null;
@@ -1220,7 +1207,6 @@ const finishedWork = (fiber, isMount) => {
       }
     };
 
-    fiber.unmountFlags |= RefFlag;
     markRef(fiber);
   }
 
@@ -1459,7 +1445,6 @@ const innerRender = (renderContext) => {
   print("count", "Generator Fiber Count");
 
   if (current.flags !== NoFlags) {
-    bubbleUnmountFlags(current);
     renderContext.MutationQueue.push(current);
   } else {
     current.flags = NoFlags;
