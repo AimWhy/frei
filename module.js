@@ -1050,6 +1050,7 @@ const beginWork = (returnFiber) => {
           } else {
             isNeedRecordNodeKey = true;
             fillFiberKeyMap(newFiberKeyMap, newFiberArr, startIndex, children);
+            startIndex = childLength - 1;
           }
         }
 

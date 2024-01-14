@@ -1074,6 +1074,7 @@
                 startIndex,
                 children
               );
+              startIndex = childLength - 1;
             }
           }
 
