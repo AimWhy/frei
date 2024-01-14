@@ -1,4 +1,10 @@
-import { createRoot, useEffect, useReducer } from "../module";
+import {
+  createRoot,
+  useEffect,
+  useCallback,
+  useMemo,
+  useReducer,
+} from "../module";
 
 const random = (max) => Math.round(Math.random() * 1000) % max;
 
@@ -128,26 +134,34 @@ const listReducer = (state, action) => {
 
 const Row = ({ selected, item, dispatch }) => {
   let ref;
-  if (item.id % 1000 == 1) {
+  if (item.id % 100 == 1) {
     useEffect(() => {
       console.log(1);
       return () => {
         console.log(101);
       };
-    }, [])
+    }, []);
   }
   if (item.id == "3") {
     ref = (v) => {
       window.wi = v;
     };
   }
+
+  const selectFn = useCallback(
+    () => dispatch({ type: "SELECT", id: item.id }),
+    [item.id]
+  );
+  const deleteFn = useCallback(
+    () => dispatch({ type: "REMOVE", id: item.id }),
+    [item.id]
+  );
+
   return (
     <tr className={selected ? "danger" : ""} ref={ref}>
       <td className="col-md-1">{item.id}</td>
       <td className="col-md-4">
-        <a onClick={() => dispatch({ type: "SELECT", id: item.id })}>
-          {item.label}
-        </a>
+        <a onClick={selectFn}>{item.label}</a>
       </td>
 
       <td className="col-md-4">
@@ -201,7 +215,7 @@ const Row = ({ selected, item, dispatch }) => {
       </td>
 
       <td className="col-md-1">
-        <button onClick={() => dispatch({ type: "REMOVE", id: item.id })}>
+        <button onClick={deleteFn}>
           <div>删除</div>
         </button>
       </td>
@@ -272,18 +286,20 @@ const Main = () => {
   return (
     <div className="container">
       <Jumbotron dispatch={dispatch} />
-      <table className="table table-hover table-striped test-data">
-        <tbody>
-          {data.map((item) => (
-            <Row
-              key={item.id}
-              item={item}
-              selected={selected === item.id}
-              dispatch={dispatch}
-            />
-          ))}
-        </tbody>
-      </table>
+      {data.length ? (
+        <table className="table table-hover table-striped test-data">
+          <tbody>
+            {data.map((item) => (
+              <Row
+                key={item.id}
+                item={item}
+                selected={selected === item.id}
+                dispatch={dispatch}
+              />
+            ))}
+          </tbody>
+        </table>
+      ) : null}
       <span
         className="preloadicon glyphicon glyphicon-remove"
         aria-hidden="true"

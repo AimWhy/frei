@@ -18,45 +18,6 @@
 
   const Fragment = (props) => props.children;
 
-  const FiberPools = new Map();
-
-  function reuseFiber(element, nodeKey) {
-    const fiberType = element.type;
-
-    if (!FiberPools.has(fiberType)) {
-      return null;
-    }
-
-    const pool = FiberPools.get(fiberType);
-    if (!pool.length) {
-      return null;
-    }
-
-    const result = pool.pop();
-    unMarkUnMount(result);
-
-    if (result.isFunctionComponent) {
-      result.stateNode.reset(nodeKey);
-    }
-
-    return result;
-  }
-
-  function recycleFiber(fiber) {
-    let pool;
-    const fiberType = fiber.type;
-
-    if (!FiberPools.has(fiberType)) {
-      pool = [];
-      FiberPools.set(fiberType, pool);
-    } else {
-      pool = FiberPools.get(fiberType);
-    }
-
-    markUnMount(fiber);
-    pool.push(fiber);
-  }
-
   const noop = (_) => _;
   const isArray = (val) => Array.isArray(val);
   const isString = (val) => "string" === typeof val;
@@ -629,6 +590,8 @@
     const { hookQueue } = fiber;
 
     if (hookQueue.length <= innerIndex) {
+      markUnMountEffect(workInProgress, EffectFlag);
+
       if (!fiber.onMounted) {
         Fiber.initLifecycle(fiber);
       }
@@ -656,6 +619,26 @@
         }
       }
     }
+  };
+
+  const useMemo = (func, dep) => {
+    const fiber = useFiber(true);
+    const innerIndex = fiber.__StateIndex++;
+    const { hookQueue } = fiber;
+
+    if (hookQueue.length <= innerIndex) {
+      const value = func();
+      hookQueue[innerIndex] = { value, dep };
+    } else {
+      const { dep: oldDep, value: oldValue } = hookQueue[innerIndex];
+      const value = !objectEqual(oldDep, dep) ? func() : oldValue;
+      hookQueue[innerIndex] = { value, dep };
+    }
+    return hookQueue[innerIndex].value;
+  };
+
+  const useCallback = (func, deps) => {
+    return useMemo(() => func, deps);
   };
 
   const checkIfSnapshotChanged = ({ value, getSnapshot }) => {
@@ -739,14 +722,8 @@
   const UpdateFlag = 1 << 3;
   const RefFlag = 1 << 4;
   const UnMountFlag = 1 << 5;
+  const EffectFlag = 1 << 6;
 
-  const markUnMount = (fiber) => {
-    fiber.flags |= UnMountFlag;
-  };
-  const unMarkUnMount = (fiber) => {
-    fiber.flags &= ~UnMountFlag;
-  };
-  const isMarkUnMount = (fiber) => fiber.flags & UnMountFlag;
   const markUpdate = (fiber) => {
     fiber.flags |= UpdateFlag;
   };
@@ -777,8 +754,6 @@
   const resolved = Promise.resolve();
   const nextTick = (callback) => resolved.then(callback);
 
-  const EffectFlag = 1 << 0;
-
   class Fiber {
     ref = null;
     key = null;
@@ -802,12 +777,18 @@
     sibling = null;
 
     flags = MountFlag;
+    unmountFlag = NoFlags;
+    subTreeUnmountFlag = NoFlags;
     isPortal = false;
     needRender = true;
 
     isHostText = false;
     isHostComponent = false;
     isFunctionComponent = false;
+
+    get fullNodeKey() {
+      return `${this.return ? this.return.fullNodeKey : ""}^${this.nodeKey}`;
+    }
 
     get normalChildren() {
       if (this.isHostText) {
@@ -871,28 +852,27 @@
       }
     }
 
-    unMount(isRecycle) {
-      for (const oldFiber of walkChildFiber(this)) {
-        if (!oldFiber.isHostText) {
-          oldFiber.unMount();
+    unMount() {
+      if (this.subTreeUnmountFlag) {
+        for (const oldFiber of walkChildFiber(this)) {
+          if (!oldFiber.isHostText) {
+            oldFiber.unMount();
+          }
         }
       }
 
-      if (this.isFunctionComponent) {
-        if (this.hookQueue) {
-          this.hookQueue.length = 0;
-        }
-        if (this.onMounted) {
-          dispatchHook(this, "onUnMounted");
-          Fiber.initLifecycle(this, true);
-        }
+      if (this.unmountFlag & EffectFlag) {
+        dispatchHook(this, "onUnMounted");
+        Fiber.initLifecycle(this, true);
       }
 
-      this.ref && this.ref(null);
-
-      if (isRecycle) {
-        recycleFiber(this);
+      if (this.unmountFlag & RefFlag) {
+        this.ref && this.ref(null);
       }
+
+      this.unmountFlag = NoFlags;
+
+      print("count", "Fiber unMount: ");
     }
   }
 
@@ -926,11 +906,6 @@
 
   const runUpdate = (fn) => fn();
   const incomingQueue = (fiber) => {
-    const destroyFiber = findParentFiber(fiber, isMarkUnMount);
-    if (destroyFiber) {
-      return;
-    }
-
     if (fiber.updateQueue) {
       fiber.updateQueue.forEach(runUpdate);
       fiber.updateQueue.length = 0;
@@ -959,32 +934,15 @@
   const createFiber = (element, nodeKey, oldFiber) => {
     let fiber = oldFiber;
 
-    if (!fiber) {
-      fiber = reuseFiber(element, nodeKey);
-      // 缓存池中取到的 fiber，重置数据属性
-      if (fiber) {
-        fiber.key = element.key;
-        fiber.flags = NoFlags;
-        fiber.nodeKey = nodeKey;
-        fiber.__deletion = null;
-        fiber.oldIndex = -1;
-
-        fiber.pendingProps = element.props;
-        finishedWork(fiber, false);
-        fiber.needRender = true;
-      }
-    } else {
-      fiber.oldIndex = fiber.index;
-      fiber.pendingProps = element.props;
-      fiber.needRender = finishedWork(fiber, false);
-    }
-
     if (fiber) {
       fiber.sibling = null;
       fiber.return = null;
       fiber.__skip = false;
       fiber.preReferFiber = null;
       fiber.__isReuseFromMe = false;
+      fiber.oldIndex = fiber.index;
+      fiber.pendingProps = element.props;
+      fiber.needRender = finishedWork(fiber, false);
 
       fiber.isPortal = !!fiber.pendingProps.__target;
     } else {
@@ -1074,7 +1032,7 @@
                 startIndex,
                 children
               );
-              startIndex = childLength - 1;
+              startIndex = childLength;
             }
           }
 
@@ -1093,6 +1051,7 @@
         returnFiber.__deletion = returnFiber.child;
       }
 
+      // 这里可以在 commit 中处理
       if (returnFiber.__deletion) {
         childDeletionFiber(returnFiber);
       }
@@ -1206,6 +1165,13 @@
     return returnFiber.child;
   };
 
+  const markUnMountEffect = (fiber, flag) => {
+    fiber.unmountFlag |= flag;
+    findParentFiber(fiber, (f) => {
+      f.subTreeUnmountFlag |= flag;
+    });
+  };
+
   const SkipEventFunc = noop;
 
   const finishedWork = (fiber, isMount) => {
@@ -1217,7 +1183,7 @@
 
     const oldRef = oldProps.ref;
     const newRef = newProps.ref;
-    if (oldRef !== newRef) {
+    if (oldRef || newRef) {
       fiber.ref = (instance) => {
         if (isFunction(oldRef)) {
           oldRef(null);
@@ -1230,6 +1196,7 @@
         } else if (newRef && "current" in newRef) {
           newRef.current = instance;
         }
+        markUnMountEffect(fiber, RefFlag);
       };
 
       markRef(fiber);
@@ -1510,6 +1477,8 @@
   exports.useRef = useRef;
   exports.useState = useState;
   exports.createContext = createContext;
+  exports.useMemo = useMemo;
+  exports.useCallback = useCallback;
   exports.useContext = useContext;
   exports.useEffect = useEffect;
   exports.useSyncExternalStore = useSyncExternalStore;
