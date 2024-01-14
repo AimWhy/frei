@@ -303,15 +303,16 @@
   const setStyle = (style, name, val) => {
     if (isArray(val)) {
       val.forEach((v) => setStyle(style, name, v));
+      return;
+    }
+
+    if (val == null) {
+      val = "";
+    }
+    if (name.startsWith("--")) {
+      style.setProperty(name, val);
     } else {
-      if (val == null) {
-        val = "";
-      }
-      if (name.startsWith("--")) {
-        style.setProperty(name, val);
-      } else {
-        style[camelize(name)] = val;
-      }
+      style[camelize(name)] = val;
     }
   };
 
@@ -720,9 +721,9 @@
   const MovedFlag = 1 << 1;
   const PortalMovedFlag = 1 << 2;
   const UpdateFlag = 1 << 3;
-  const RefFlag = 1 << 4;
-  const UnMountFlag = 1 << 5;
-  const EffectFlag = 1 << 6;
+  const ChildDeletion = 1 << 4;
+  const RefFlag = 1 << 5; // 更新 & 卸载副作用
+  const EffectFlag = 1 << 6; // 卸载副作用
 
   const markUpdate = (fiber) => {
     fiber.flags |= UpdateFlag;
@@ -745,6 +746,10 @@
     fiber.flags &= ~MovedFlag;
   };
   const isMarkMoved = (fiber) => fiber.flags & (MovedFlag | PortalMovedFlag);
+  const markChildDeletion = (fiber) => {
+    fiber.flags |= ChildDeletion;
+  };
+  const isMarkChildDeletion = (fiber) => fiber.flags & ChildDeletion;
   const markRef = (fiber) => {
     fiber.flags |= RefFlag;
   };
@@ -871,7 +876,6 @@
       }
 
       this.unmountFlag = NoFlags;
-
       print("count", "Fiber unMount: ");
     }
   }
@@ -1051,9 +1055,8 @@
         returnFiber.__deletion = returnFiber.child;
       }
 
-      // 这里可以在 commit 中处理
       if (returnFiber.__deletion) {
-        childDeletionFiber(returnFiber);
+        markChildDeletion(returnFiber);
       }
     }
 
@@ -1379,6 +1382,9 @@
 
     for (const fiber of renderContext.MutationQueue) {
       if (!fiber.isFunctionComponent) {
+        if (isMarkChildDeletion(fiber)) {
+          childDeletionFiber(fiber);
+        }
         if (isMarkUpdate(fiber)) {
           updateHostFiber(fiber);
         }
@@ -1392,6 +1398,9 @@
           fiber.ref(fiber.stateNode);
         }
       } else {
+        if (isMarkChildDeletion(fiber)) {
+          childDeletionFiber(fiber);
+        }
         if (isMarkMount(fiber)) {
           placementFiber(fiber, true);
           dispatchHook(fiber, "onMounted", true);
