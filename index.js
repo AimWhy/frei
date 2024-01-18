@@ -591,7 +591,7 @@
     const { hookQueue } = fiber;
 
     if (hookQueue.length <= innerIndex) {
-      markUnMountEffect(workInProgress, EffectFlag);
+      markUnMountEffect(fiber, EffectFlag);
 
       if (!fiber.onMounted) {
         Fiber.initLifecycle(fiber);
@@ -875,7 +875,7 @@
         this.ref && this.ref(null);
       }
 
-      this.unmountFlag = NoFlags;
+      this.unmountFlag = this.subTreeUnmountFlag = NoFlags;
       print("count", "Fiber unMount: ");
     }
   }
