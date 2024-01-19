@@ -591,7 +591,7 @@
     const { hookQueue } = fiber;
 
     if (hookQueue.length <= innerIndex) {
-      markUnMountEffect(fiber, EffectFlag);
+      markUnMountEffect(fiber, LifecycleFlag);
 
       if (!fiber.onMounted) {
         Fiber.initLifecycle(fiber);
@@ -723,8 +723,13 @@
   const UpdateFlag = 1 << 3;
   const ChildDeletion = 1 << 4;
   const RefFlag = 1 << 5; // 更新 & 卸载副作用
-  const EffectFlag = 1 << 6; // 卸载副作用
+  const LifecycleFlag = 1 << 6; // 卸载副作用
+  const UnmountFlag = 1 << 7;
 
+  const markUnMount = (fiber) => {
+    fiber.flags |= UnmountFlag;
+  };
+  const isMarkUnMount = (fiber) => fiber.flags & UnmountFlag;
   const markUpdate = (fiber) => {
     fiber.flags |= UpdateFlag;
   };
@@ -782,8 +787,8 @@
     sibling = null;
 
     flags = MountFlag;
-    unmountFlag = NoFlags;
-    subTreeUnmountFlag = NoFlags;
+    effectFlag = NoFlags;
+    subTreeEffectFlag = NoFlags;
     isPortal = false;
     needRender = true;
 
@@ -858,7 +863,7 @@
     }
 
     unMount() {
-      if (this.subTreeUnmountFlag) {
+      if (this.subTreeEffectFlag) {
         for (const oldFiber of walkChildFiber(this)) {
           if (!oldFiber.isHostText) {
             oldFiber.unMount();
@@ -866,16 +871,20 @@
         }
       }
 
-      if (this.unmountFlag & EffectFlag) {
+      if (this.effectFlag & LifecycleFlag) {
+        if (this.hookQueue) {
+          this.hookQueue.length = 0;
+        }
         dispatchHook(this, "onUnMounted");
         Fiber.initLifecycle(this, true);
       }
 
-      if (this.unmountFlag & RefFlag) {
+      if (this.effectFlag & RefFlag) {
         this.ref && this.ref(null);
       }
 
-      this.unmountFlag = this.subTreeUnmountFlag = NoFlags;
+      this.effectFlag = this.subTreeEffectFlag = NoFlags;
+      markUnMount(this);
       print("count", "Fiber unMount: ");
     }
   }
@@ -910,6 +919,11 @@
 
   const runUpdate = (fn) => fn();
   const incomingQueue = (fiber) => {
+    const destroyFiber = findParentFiber(fiber, isMarkUnMount);
+    if (destroyFiber) {
+      return;
+    }
+
     if (fiber.updateQueue) {
       fiber.updateQueue.forEach(runUpdate);
       fiber.updateQueue.length = 0;
@@ -1169,9 +1183,9 @@
   };
 
   const markUnMountEffect = (fiber, flag) => {
-    fiber.unmountFlag |= flag;
+    fiber.effectFlag |= flag;
     findParentFiber(fiber, (f) => {
-      f.subTreeUnmountFlag |= flag;
+      f.subTreeEffectFlag |= flag;
     });
   };
 
