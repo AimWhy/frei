@@ -58,6 +58,7 @@ export const objectEqual = (object1, object2, isDeep) => {
       if (!isDeep) {
         return false;
       } else if (!objectEqual(o1, o2, isDeep)) {
+        isDeep && isDeep(object1, object2);
         return false;
       }
     }
@@ -109,7 +110,7 @@ const genQueueMacrotask = (macrotaskName) => {
       return;
     }
 
-    let resetCount = 0;
+    let resetCount = 1;
     const timeoutTime = Date.now() + FrameYieldMs;
 
     while (
@@ -504,7 +505,6 @@ export const useReducer = (reducer, initialState) => {
         const newState = reducer(hookQueue[innerIndex].state, action);
         hookQueue[innerIndex].state = newState;
       });
-
       fiber.rerender();
     };
 
@@ -928,7 +928,6 @@ const createFiber = (element, relationKey, oldFiber) => {
     fiber.preReferFiber = null;
     fiber.pendingProps = element.props;
     fiber.needRender = finishedWork(fiber, false);
-
     fiber.isPortal = !!fiber.pendingProps.__target;
   } else {
     fiber = new Fiber(element, relationKey);
@@ -977,7 +976,7 @@ const fillFiberKeyMap = (fiberKeyMap, fiberArray, startIndex, children) => {
   for (let i = startIndex; i < fiberArray.length; i++) {
     const newNodeKey = Fiber.genRelationKey(children[i], i);
     fiberArray[i] = newNodeKey;
-    fiberKeyMap[newNodeKey] = i;
+    fiberKeyMap.set(newNodeKey, i);
   }
 };
 
@@ -989,27 +988,13 @@ const beginWork = (returnFiber) => {
   const children = returnFiber.normalChildren;
   const childLength = children ? children.length : 0;
   const newFiberArr = childLength ? Array(childLength) : null;
-
-  let maxCount = 0;
   let hasReuseFiber = false;
-  let reuseFiberArr;
-  let increasing;
-  let indexCount;
-
-  const initReuseInfo = () => {
-    if (!hasReuseFiber) {
-      hasReuseFiber = true;
-      reuseFiberArr = [];
-      increasing = [];
-      indexCount = [];
-    }
-  };
 
   let startIndex = 0;
   if (!isMarkMount(returnFiber) && returnFiber.child) {
     if (childLength > 0) {
       const deletionArr = [];
-      const newFiberKeyToIndex = Object.create(null);
+      const newFiberKeyToIndex = new Map();
 
       let isNeedRecordNodeKey = false;
       for (const oldFiber of walkChildFiber(returnFiber)) {
@@ -1028,16 +1013,16 @@ const beginWork = (returnFiber) => {
               children
             );
             startIndex = childLength;
-            index = newFiberKeyToIndex[oldFiber.relationKey];
+            index = newFiberKeyToIndex.get(oldFiber.relationKey);
           }
           // 上面👆🏻 的逻辑主要是填充 newFiberKeyToIndex 信息，方便查找 oldRelationKey 存在否
         } else {
           // 未找到时值为 undefined，判断 index > -1 依然不成立
-          index = newFiberKeyToIndex[oldFiber.relationKey];
+          index = newFiberKeyToIndex.get(oldFiber.relationKey);
         }
 
         if (index > -1) {
-          initReuseInfo();
+          hasReuseFiber = true;
           newFiberArr[index] = oldFiber;
         } else {
           deletionArr.push(oldFiber);
@@ -1064,67 +1049,68 @@ const beginWork = (returnFiber) => {
   returnFiber.child = null;
   returnFiber.childrenCount = childLength;
 
-  if (childLength) {
-    let preFiber = null;
-    let preNoPortalFiber = null;
-    let j = 0;
-    let index = 0;
+  let j = 0;
+  let maxCount = 0;
+  let increasing = hasReuseFiber ? [] : null;
+  let indexCount = hasReuseFiber ? [] : null;
+  let reuseFiberArr = hasReuseFiber ? [] : null;
 
-    for (const fiberOrKey of newFiberArr) {
-      const isKey = isString(fiberOrKey);
-      const relationKey = isKey ? fiberOrKey : fiberOrKey.relationKey;
-      const oldFiber = isKey ? null : fiberOrKey;
-      const fiber = createFiber(children[index], relationKey, oldFiber);
+  let preFiber = null;
+  let preNoPortalFiber = null;
+  for (let index = 0; index < childLength; index++) {
+    const fiberOrKey = newFiberArr[index];
+    const isKey = isString(fiberOrKey);
+    const relationKey = isKey ? fiberOrKey : fiberOrKey.relationKey;
+    const oldFiber = isKey ? null : fiberOrKey;
+    const fiber = createFiber(children[index], relationKey, oldFiber);
 
-      fiber.oldIndex = fiber.index;
-      fiber.index = index;
-      fiber.return = returnFiber;
+    fiber.oldIndex = fiber.index;
+    fiber.index = index;
+    fiber.return = returnFiber;
 
-      if (fiber.oldIndex === -1) {
-        markMount(fiber, preNoPortalFiber);
+    if (fiber.oldIndex === -1) {
+      markMount(fiber, preNoPortalFiber);
+    } else {
+      markMoved(fiber, preNoPortalFiber);
+
+      if (!!fiber.memoizedProps.__target ^ fiber.isPortal) {
+        markPortalMoved(fiber, preNoPortalFiber);
+      }
+
+      reuseFiberArr.push(fiber);
+
+      // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
+      const i = findIndex(increasing, fiber);
+      let count = 0;
+      if (i + 1 > increasing.length) {
+        increasing.push(fiber);
+        count = increasing.length;
       } else {
-        markMoved(fiber, preNoPortalFiber);
-
-        if (!!fiber.memoizedProps.__target ^ fiber.isPortal) {
-          markPortalMoved(fiber, preNoPortalFiber);
-        }
-
-        reuseFiberArr.push(fiber);
-
-        // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
-        const i = findIndex(increasing, fiber);
-        let count = 0;
-        if (i + 1 > increasing.length) {
-          increasing.push(fiber);
-          count = increasing.length;
-        } else {
-          increasing[i] = fiber;
-          count = i + 1;
-        }
-        indexCount[j++] = count;
-        maxCount = Math.max(maxCount, count);
+        increasing[i] = fiber;
+        count = i + 1;
       }
-
-      if (index === 0) {
-        returnFiber.child = fiber;
-      } else {
-        preFiber.sibling = fiber;
-      }
-
-      if (!fiber.isPortal) {
-        preNoPortalFiber = fiber;
-      }
-
-      index++;
-      preFiber = fiber;
-      fiber.memoizedProps = fiber.pendingProps;
+      indexCount[j++] = count;
+      maxCount = Math.max(maxCount, count);
     }
+
+    if (index === 0) {
+      returnFiber.child = fiber;
+    } else {
+      preFiber.sibling = fiber;
+    }
+
+    if (!fiber.isPortal) {
+      preNoPortalFiber = fiber;
+    }
+
+    preFiber = fiber;
+    fiber.memoizedProps = fiber.pendingProps;
   }
 
-  let reuseFromFiber = null;
-  // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
-  // 所以需要再走一遍构建 increasing 的逻辑
   if (hasReuseFiber) {
+    let reuseFromFiber = null;
+    // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
+    // 所以需要再走一遍构建 increasing 的逻辑
     for (let i = reuseFiberArr.length - 1; i > -1; i--) {
       const fiber = reuseFiberArr[i];
 
@@ -1150,10 +1136,10 @@ const beginWork = (returnFiber) => {
         fiber.__skip = true;
       }
     }
-  }
 
-  if (reuseFromFiber) {
-    reuseFromFiber.__isReuseFromMe = true;
+    if (reuseFromFiber) {
+      reuseFromFiber.__isReuseFromMe = true;
+    }
   }
 
   return returnFiber.child;
@@ -1310,10 +1296,10 @@ const placementFiber = (fiber, isMount) => {
   }
 
   const isMountInsert = isMarkMount(parentFiber);
-  const usePosition = isVNode(parentFiber.stateNode);
+  const isVNodeParent = isVNode(parentFiber.stateNode);
 
   if (isMountInsert) {
-    if (usePosition) {
+    if (isVNodeParent) {
       hostConfig.toBefore(fiber.stateNode, parentFiber.stateNode.endNode);
     } else {
       hostConfig.toLast(fiber.stateNode, parentFiber.stateNode);
@@ -1331,7 +1317,7 @@ const placementFiber = (fiber, isMount) => {
     return;
   }
 
-  if (usePosition) {
+  if (isVNodeParent) {
     hostConfig.toAfter(fiber.stateNode, parentFiber.stateNode.startNode);
   } else {
     hostConfig.toFirst(fiber.stateNode, parentFiber.stateNode);
@@ -1352,7 +1338,6 @@ const childDeletionFiber = (returnFiber) => {
       hostConfig.removeNode(fiber.stateNode);
       fiber.unMount(true);
     }
-    returnFiber.__deletion.length = 0;
   } else {
     // 删除 旧returnFiber 的所有子节点，__deletion 指向 旧的.child
     hostConfig.removeChildren(returnFiber.stateNode);
@@ -1362,8 +1347,8 @@ const childDeletionFiber = (returnFiber) => {
       current.unMount(true);
       current = current.sibling;
     }
-    returnFiber.__deletion = null;
   }
+  returnFiber.__deletion = null;
 };
 
 const commitRoot = (renderContext) => {
