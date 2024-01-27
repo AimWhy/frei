@@ -857,10 +857,12 @@
 
     unMount() {
       if (this.subTreeEffectFlag) {
-        for (const oldFiber of walkChildFiber(this)) {
-          if (!oldFiber.isHostText) {
-            oldFiber.unMount();
+        let cursor = this.child;
+        while (cursor) {
+          if (!cursor.isHostText) {
+            cursor.unMount();
           }
+          cursor = cursor.sibling;
         }
       }
 
@@ -886,11 +888,9 @@
       element.key != null ? element.key : index
     }`;
 
-  Fiber.isReuseFiber = (fiber, element, index) =>
-    fiber.type === element.type &&
-    (fiber.key != null
-      ? fiber.key === element.key
-      : element.key == null && fiber.index === index);
+  Fiber.isCanReuse = (fiber, children, i) =>
+    fiber.type === children[i].type &&
+    (fiber.key != null ? fiber.key == children[i].key : fiber.index === i);
 
   Fiber.initLifecycle = (fiber) => {
     fiber.onMounted = new Set();
@@ -924,14 +924,6 @@
 
     return innerRender.bind(null, renderContext);
   };
-
-  function* walkChildFiber(returnFiber) {
-    let fiber = returnFiber.child;
-    while (fiber) {
-      yield fiber;
-      fiber = fiber.sibling;
-    }
-  }
 
   const createFiber = (element, relationKey, oldFiber) => {
     let fiber = oldFiber;
@@ -1005,58 +997,50 @@
     const children = returnFiber.normalChildren;
     const childLength = children ? children.length : 0;
     const newFiberArr = childLength ? Array(childLength) : null;
-    let hasReuseFiber = false;
 
     let startIndex = 0;
-    if (!isMarkMount(returnFiber) && returnFiber.child) {
-      if (childLength > 0) {
-        const deletionArr = [];
-        const newFiberKeyToIndex = new Map();
+    let hasReuseFiber = false;
+    let oldCursor = returnFiber.child;
 
-        let isNeedRecordNodeKey = false;
-        for (const oldFiber of walkChildFiber(returnFiber)) {
-          let index = -1;
+    if (childLength) {
+      let isFromMap = false;
+      let deletionArr = [];
+      let newKeyToIndex = new Map();
 
-          if (!isNeedRecordNodeKey && startIndex < childLength) {
-            if (
-              Fiber.isReuseFiber(oldFiber, children[startIndex], startIndex)
-            ) {
-              index = startIndex;
-              startIndex++;
-            } else {
-              isNeedRecordNodeKey = true;
-              fillFiberKeyMap(
-                newFiberKeyToIndex,
-                newFiberArr,
-                startIndex,
-                children
-              );
-              startIndex = childLength;
-              index = newFiberKeyToIndex.get(oldFiber.relationKey);
-            }
-            // 上面👆🏻 的逻辑主要是填充 newFiberKeyToIndex 信息，方便查找 oldRelationKey 存在否
+      while (oldCursor) {
+        let index = -1;
+        if (!isFromMap) {
+          if (Fiber.isCanReuse(oldCursor, children, startIndex)) {
+            index = startIndex;
+            startIndex++;
           } else {
-            // 未找到时值为 undefined，判断 index > -1 依然不成立
-            index = newFiberKeyToIndex.get(oldFiber.relationKey);
+            isFromMap = true;
+            fillFiberKeyMap(newKeyToIndex, newFiberArr, startIndex, children);
+            index = newKeyToIndex.get(oldCursor.relationKey);
+            startIndex = childLength;
           }
-
-          if (index > -1) {
-            hasReuseFiber = true;
-            newFiberArr[index] = oldFiber;
-          } else {
-            deletionArr.push(oldFiber);
-          }
+        } else {
+          index = newKeyToIndex.get(oldCursor.relationKey);
         }
 
-        returnFiber.__deletion = deletionArr.length ? deletionArr : null;
-      } else {
-        // 若移除所有子节点，则将 __deletion 赋值为 旧的.child
-        returnFiber.__deletion = returnFiber.child;
+        if (index > -1) {
+          hasReuseFiber = true;
+          newFiberArr[index] = oldCursor;
+        } else {
+          deletionArr.push(oldCursor);
+        }
+
+        oldCursor = oldCursor.sibling;
       }
 
-      if (returnFiber.__deletion) {
-        markChildDeletion(returnFiber);
-      }
+      returnFiber.__deletion = deletionArr.length ? deletionArr : null;
+    } else {
+      // 移除所有子节点 => 此时不为数组、而是指向旧的第一个子节点
+      returnFiber.__deletion = oldCursor;
+    }
+
+    if (returnFiber.__deletion) {
+      markChildDeletion(returnFiber);
     }
 
     // 新节点数比旧节点数多，则填充后续新节点的 relationKey
