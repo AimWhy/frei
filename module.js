@@ -872,6 +872,7 @@ Fiber.genRelationKey = (element, index) =>
   }`;
 
 Fiber.isCanReuse = (fiber, children, i) =>
+  children[i] &&
   fiber.type === children[i].type &&
   (fiber.key != null ? fiber.key == children[i].key : fiber.index === i);
 
@@ -991,6 +992,7 @@ const beginWork = (returnFiber) => {
     let newKeyToIndex = new Map();
 
     while (oldCursor) {
+      print('count', 'oldCursor')
       let index = -1;
       if (!isFromMap) {
         if (Fiber.isCanReuse(oldCursor, children, startIndex)) {
@@ -1030,6 +1032,7 @@ const beginWork = (returnFiber) => {
   for (let index = startIndex; index < childLength; index++) {
     const newNodeKey = Fiber.genRelationKey(children[index], index);
     newFiberArr[index] = newNodeKey;
+    print('count', 'newCursor')
   }
 
   returnFiber.child = null;

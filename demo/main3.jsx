@@ -291,7 +291,6 @@ const Main = () => {
           <tbody>
             {data.map((item) => (
               <Row
-                key={item.id}
                 item={item}
                 selected={selected === item.id}
                 dispatch={dispatch}
