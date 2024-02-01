@@ -98,8 +98,8 @@ const isSpecialBooleanAttr = (val) =>
 const includeBooleanAttr = (value) => "" === value || !!value;
 
 const genQueueMacrotask = (macrotaskName) => {
-  const FrameYieldMs = 10;
-  const ThrottleCount = 30;
+  let ThrottleCount = 5000;
+
   const scheduledQueue = [];
   const channel = new MessageChannel();
 
@@ -110,13 +110,10 @@ const genQueueMacrotask = (macrotaskName) => {
       return;
     }
 
-    let resetCount = 1;
-    const timeoutTime = Date.now() + FrameYieldMs;
+    let resetCount = ThrottleCount;
+    const startTime = Date.now();
 
-    while (
-      scheduledQueue.length &&
-      (resetCount !== 0 || Date.now() <= timeoutTime)
-    ) {
+    while (scheduledQueue.length && resetCount > 0) {
       const beforeLen = scheduledQueue.length;
       const work = scheduledQueue[beforeLen - 1];
       const next = work();
@@ -134,7 +131,16 @@ const genQueueMacrotask = (macrotaskName) => {
         scheduledQueue.length = afterLen - 1;
       }
 
-      resetCount = (resetCount + 1) % ThrottleCount;
+      resetCount--;
+    }
+
+    if (resetCount <= 0) {
+      const deltaTime = Date.now() - startTime;
+      if (deltaTime < 5) {
+        ThrottleCount = (ThrottleCount * 1.1) >> 0;
+      } else if (deltaTime > 11) {
+        ThrottleCount = (ThrottleCount * 0.9) >> 0;
+      }
     }
 
     if (scheduledQueue.length) {
@@ -992,7 +998,6 @@ const beginWork = (returnFiber) => {
     let newKeyToIndex = new Map();
 
     while (oldCursor) {
-      print('count', 'oldCursor')
       let index = -1;
       if (!isFromMap) {
         if (Fiber.isCanReuse(oldCursor, children, startIndex)) {
@@ -1032,7 +1037,6 @@ const beginWork = (returnFiber) => {
   for (let index = startIndex; index < childLength; index++) {
     const newNodeKey = Fiber.genRelationKey(children[index], index);
     newFiberArr[index] = newNodeKey;
-    print('count', 'newCursor')
   }
 
   returnFiber.child = null;
@@ -1390,8 +1394,8 @@ const commitRoot = (renderContext) => {
 };
 
 const toCommit = (renderContext) => {
-  commitRoot(renderContext);
   NoEqualMapCache.clear();
+  commitRoot(renderContext);
 
   if (renderContext.restoreDataFn) {
     return renderContext.restoreDataFn;
