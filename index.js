@@ -8,7 +8,6 @@
       factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
-
   const jsx = (type, props = {}, key = null) => ({
     key,
     type,
@@ -109,8 +108,8 @@
   const includeBooleanAttr = (value) => "" === value || !!value;
 
   const genQueueMacrotask = (macrotaskName) => {
-    const FrameYieldMs = 10;
-    const ThrottleCount = 30;
+    let ThrottleCount = 5000;
+
     const scheduledQueue = [];
     const channel = new MessageChannel();
 
@@ -121,13 +120,10 @@
         return;
       }
 
-      let resetCount = 1;
-      const timeoutTime = Date.now() + FrameYieldMs;
+      let resetCount = ThrottleCount;
+      const startTime = Date.now();
 
-      while (
-        scheduledQueue.length &&
-        (resetCount !== 0 || Date.now() <= timeoutTime)
-      ) {
+      while (scheduledQueue.length && resetCount > 0) {
         const beforeLen = scheduledQueue.length;
         const work = scheduledQueue[beforeLen - 1];
         const next = work();
@@ -145,7 +141,16 @@
           scheduledQueue.length = afterLen - 1;
         }
 
-        resetCount = (resetCount + 1) % ThrottleCount;
+        resetCount--;
+      }
+
+      if (resetCount <= 0) {
+        const deltaTime = Date.now() - startTime;
+        if (deltaTime < 5) {
+          ThrottleCount = (ThrottleCount * 1.1) >> 0;
+        } else if (deltaTime > 11) {
+          ThrottleCount = (ThrottleCount * 0.9) >> 0;
+        }
       }
 
       if (scheduledQueue.length) {
@@ -889,6 +894,7 @@
     }`;
 
   Fiber.isCanReuse = (fiber, children, i) =>
+    children[i] &&
     fiber.type === children[i].type &&
     (fiber.key != null ? fiber.key == children[i].key : fiber.index === i);
 
@@ -1404,8 +1410,8 @@
   };
 
   const toCommit = (renderContext) => {
-    commitRoot(renderContext);
     NoEqualMapCache.clear();
+    commitRoot(renderContext);
 
     if (renderContext.restoreDataFn) {
       return renderContext.restoreDataFn;
