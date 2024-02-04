@@ -8,14 +8,14 @@
       factory((global.frei = {})));
 })(this, function (exports) {
   "use strict";
+
+  const Fragment = (props) => props.children;
   const jsx = (type, props = {}, key = null) => ({
     key,
     type,
     props,
     $$typeof: 1,
   });
-
-  const Fragment = (props) => props.children;
 
   const noop = (_) => _;
   const isArray = (val) => Array.isArray(val);
@@ -122,7 +122,6 @@
 
       let resetCount = ThrottleCount;
       const startTime = Date.now();
-
       while (scheduledQueue.length && resetCount > 0) {
         const beforeLen = scheduledQueue.length;
         const work = scheduledQueue[beforeLen - 1];
@@ -182,7 +181,7 @@
     `on${eventType[0].toUpperCase()}${eventType.slice(1)}`;
 
   const eventTypeMap = `click,dblclick,mousedown,mouseup,mousemove,
-  keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
+keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     .split(/[^a-z]+/)
     .reduce((map, eventType) => {
       const eventName = toEventName(eventType);
@@ -273,7 +272,7 @@
   const testHostSpecialAttr = (attrName) => /^on[A-Z]/.test(attrName);
   const hostSpecialAttrSet = new Set(
     `onLoad,onBeforeunload,onUnload,onScroll,onFocus,onBlur,
-    onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
+  onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
   );
 
   const onCompositionStart = (e) => {
@@ -759,8 +758,6 @@
   const isMarkRef = (fiber) => fiber.flags & RefFlag;
 
   const EmptyProps = {};
-  const resolved = Promise.resolve();
-  const nextTick = (callback) => resolved.then(callback);
 
   class Fiber {
     ref = null;
@@ -851,12 +848,34 @@
 
     rerender() {
       // 同步执行中添加多次，只向渲染 mainQueueMacrotask 队列中添加一条
-      if (!this.lock) {
-        this.lock = true;
-        nextTick(() => {
-          this.lock = false;
+      const fiber = this;
+      if (!fiber.lock) {
+        fiber.lock = true;
+
+        mainQueueMacrotask(() => {
+          fiber.lock = false;
+          const destroyFiber = findParentFiber(fiber, isMarkUnMount);
+          if (destroyFiber) {
+            return;
+          }
+
+          // 执行更新队列
+          if (fiber.updateQueue) {
+            fiber.updateQueue.forEach((fn) => fn());
+            fiber.updateQueue.length = 0;
+          }
+
+          // 设置更新标记
+          fiber.needRender = true;
+          markUpdate(fiber);
+
+          // 深度遍历执行
+          return innerRender.bind(null, {
+            MutationQueue: [],
+            gen: genFiberTree2(fiber),
+            restoreDataFn: hostConfig.genRestoreDataFn(),
+          });
         });
-        mainQueueMacrotask(incomingQueue.bind(null, this));
       }
     }
 
@@ -905,30 +924,6 @@
     fiber.onBeforeUpdate = new Set();
     fiber.onBeforeMove = new Set();
     fiber.onMoved = new Set();
-  };
-
-  const runUpdate = (fn) => fn();
-  const incomingQueue = (fiber) => {
-    const destroyFiber = findParentFiber(fiber, isMarkUnMount);
-    if (destroyFiber) {
-      return;
-    }
-
-    if (fiber.updateQueue) {
-      fiber.updateQueue.forEach(runUpdate);
-      fiber.updateQueue.length = 0;
-    }
-
-    fiber.needRender = true;
-    markUpdate(fiber);
-
-    const renderContext = {
-      MutationQueue: [],
-      gen: genFiberTree2(fiber),
-      restoreDataFn: hostConfig.genRestoreDataFn(),
-    };
-
-    return innerRender.bind(null, renderContext);
   };
 
   const createFiber = (element, relationKey, oldFiber) => {
@@ -1410,11 +1405,10 @@
   };
 
   const toCommit = (renderContext) => {
-    NoEqualMapCache.clear();
     commitRoot(renderContext);
 
     if (renderContext.restoreDataFn) {
-      return renderContext.restoreDataFn;
+      renderContext.restoreDataFn();
     }
   };
 
@@ -1423,6 +1417,7 @@
     const current = obj.value;
 
     if (obj.done) {
+      NoEqualMapCache.clear();
       return toCommit.bind(null, renderContext);
     }
 
