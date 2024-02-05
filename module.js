@@ -10,10 +10,9 @@ const noop = (_) => _;
 const isArray = (val) => Array.isArray(val);
 const isString = (val) => "string" === typeof val;
 const isFunction = (val) => "function" === typeof val;
+const SkipEventFunc = noop;
 const print = (method, ...args) => {
-  if (false) {
-    console[method](...args);
-  }
+  1 && console[method](...args);
 };
 
 export const objectEqual = (object1, object2, isDeep) => {
@@ -98,11 +97,10 @@ const includeBooleanAttr = (value) => "" === value || !!value;
 
 const genQueueMacrotask = (macrotaskName) => {
   let ThrottleCount = 5000;
-
+  let isLoopRunning = false;
   const scheduledQueue = [];
   const channel = new MessageChannel();
 
-  let isLoopRunning = false;
   channel.port1.onmessage = () => {
     if (!scheduledQueue.length) {
       isLoopRunning = false;
@@ -290,7 +288,7 @@ const camelize = (str) => str.replace(/-(\w)/g, camelizePlacer);
 
 const setStyle = (style, name, val) => {
   if (isArray(val)) {
-    for (let v of val) {
+    for (const v of val) {
       setStyle(style, name, v);
     }
     return;
@@ -866,7 +864,7 @@ class Fiber {
     if (this.subTreeEffectFlag) {
       let cursor = this.child;
       while (cursor) {
-        if (!cursor.isHostText) {
+        if (!cursor.isHostText && cursor.effectFlag) {
           cursor.unMount();
         }
         cursor = cursor.sibling;
@@ -942,8 +940,8 @@ const findParentFiber = (fiber, checker) => {
 
 const findIndex = (increasing, fiber) => {
   let i = 0;
-  let j = increasing.length;
   let mid;
+  let j = increasing.length;
   let tempFiber = increasing[j - 1];
 
   // 如果是仅更新未移动，则可快速定位
@@ -988,8 +986,8 @@ const beginWork = (returnFiber) => {
 
   if (childLength) {
     let isFromMap = false;
-    let deletionArr = [];
-    let newKeyToIndex = new Map();
+    const deletionArr = [];
+    const newKeyToIndex = new Map();
 
     while (oldCursor) {
       let index = -1;
@@ -1036,12 +1034,12 @@ const beginWork = (returnFiber) => {
   returnFiber.child = null;
   returnFiber.childrenCount = childLength;
 
+  const increasing = hasReuseFiber ? [] : null;
+  const indexCount = hasReuseFiber ? [] : null;
+  const reuseFiberArr = hasReuseFiber ? [] : null;
+
   let j = 0;
   let maxCount = 0;
-  let increasing = hasReuseFiber ? [] : null;
-  let indexCount = hasReuseFiber ? [] : null;
-  let reuseFiberArr = hasReuseFiber ? [] : null;
-
   let preFiber = null;
   let preNoPortalFiber = null;
   for (let index = 0; index < childLength; index++) {
@@ -1067,8 +1065,8 @@ const beginWork = (returnFiber) => {
       reuseFiberArr.push(fiber);
 
       // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
-      const i = findIndex(increasing, fiber);
       let count = 0;
+      const i = findIndex(increasing, fiber);
       if (i + 1 > increasing.length) {
         increasing.push(fiber);
         count = increasing.length;
@@ -1138,8 +1136,6 @@ const markUnMountEffect = (fiber, flag) => {
     f.subTreeEffectFlag |= flag;
   });
 };
-
-const SkipEventFunc = noop;
 
 const finishedWork = (fiber, isMount) => {
   const oldProps = fiber.memoizedProps;
