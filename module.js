@@ -12,7 +12,7 @@ const isString = (val) => "string" === typeof val;
 const isFunction = (val) => "function" === typeof val;
 const SkipEventFunc = noop;
 const print = (method, ...args) => {
-  1 && console[method](...args);
+  false && console[method](...args);
 };
 const primitiveNoEqual = (a, b) =>
   null === a || null === b || "object" !== typeof a || "object" !== typeof b;
@@ -326,33 +326,28 @@ const domHostConfig = {
   },
   toFirst(child, pReference) {
     pReference.insertBefore(
-      isVNode(child) ? child.toFragment() : child,
+      isVNode(child) ? child.fragment() : child,
       pReference.firstChild
     );
   },
   toLast(child, pReference) {
-    pReference.appendChild(isVNode(child) ? child.toFragment() : child);
+    pReference.appendChild(isVNode(child) ? child.fragment() : child);
   },
   toBefore(node, sReference) {
     sReference.parentNode.insertBefore(
-      isVNode(node) ? node.toFragment() : node,
+      isVNode(node) ? node.fragment() : node,
       sReference
     );
   },
   toAfter(node, sReference) {
     sReference.parentNode.insertBefore(
-      isVNode(node) ? node.toFragment() : node,
+      isVNode(node) ? node.fragment() : node,
       sReference.nextSibling
     );
   },
   removeChildren(pNode) {
     if (isVNode(pNode)) {
-      const startNode = pNode.startNode;
-      const endNode = pNode.endNode;
-      const parentNode = startNode.parentNode;
-      while (startNode.nextSibling !== endNode) {
-        parentNode.removeChild(startNode.nextSibling);
-      }
+      document.createElement("div").appendChild(pNode.fragment(false));
     } else {
       while (pNode.firstChild) {
         pNode.removeChild(pNode.firstChild);
@@ -361,14 +356,7 @@ const domHostConfig = {
   },
   removeNode(node) {
     if (isVNode(node)) {
-      const startNode = node.startNode;
-      const endNode = node.endNode;
-      const parentNode = startNode.parentNode;
-      while (startNode.nextSibling !== endNode) {
-        parentNode.removeChild(startNode.nextSibling);
-      }
-      parentNode.removeChild(startNode);
-      parentNode.removeChild(endNode);
+      document.createElement("div").appendChild(node.fragment());
     } else {
       node.parentNode.removeChild(node);
     }
@@ -439,29 +427,23 @@ const domHostConfig = {
   },
 };
 
-const isVNode = (node) => isFunction(node.toFragment);
+const isVNode = (node) => node instanceof VNode;
 
 class VNode {
   constructor(key) {
     this.fg = domHostConfig.createFragment();
     this.startNode = domHostConfig.createComment(`start:${key}`);
     this.endNode = domHostConfig.createComment(`end:${key}`);
-    this.fg.appendChild(this.startNode);
-    this.fg.appendChild(this.endNode);
   }
-  toFragment() {
-    // 非首次渲染时, 将 startNode 和 endNode 之间的内容移动到 fg 中
-    if (!this.fg.hasChildNodes()) {
-      let current = this.startNode;
-      while (current) {
-        const nextSibling = current.nextSibling;
-        this.fg.appendChild(current);
-        if (current === this.endNode) {
-          break;
-        } else {
-          current = nextSibling;
-        }
+  fragment(hasEdge = true) {
+    if (this.startNode.isConnected) {
+      while (this.startNode.nextSibling !== this.endNode) {
+        this.fg.appendChild(this.startNode.nextSibling);
       }
+    }
+    if (hasEdge) {
+      this.fg.appendChild(this.endNode);
+      this.fg.insertBefore(this.startNode, this.fg.firstChild);
     }
     return this.fg;
   }
@@ -1283,11 +1265,12 @@ const placementFiber = (fiber, isMount) => {
   const isVNodeParent = parentFiber.isFunctionComponent;
 
   if (isMountInsert) {
-    if (isVNodeParent) {
-      hostConfig.toBefore(fiber.stateNode, parentFiber.stateNode.endNode);
-    } else {
-      hostConfig.toLast(fiber.stateNode, parentFiber.stateNode);
-    }
+    hostConfig.toLast(
+      fiber.stateNode,
+      isVNodeParent
+        ? parentFiber.stateNode.fragment(false)
+        : parentFiber.stateNode
+    );
     return;
   }
 

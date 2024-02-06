@@ -21,33 +21,29 @@
   const isArray = (val) => Array.isArray(val);
   const isString = (val) => "string" === typeof val;
   const isFunction = (val) => "function" === typeof val;
+  const SkipEventFunc = noop;
   const print = (method, ...args) => {
-    if (false) {
-      console[method](...args);
-    }
+    false && console[method](...args);
   };
+  const primitiveNoEqual = (a, b) =>
+    null === a || null === b || "object" !== typeof a || "object" !== typeof b;
 
-  const objectEqual = (object1, object2, isDeep) => {
+  const objectEqual = (object1, object2, deepCheck, isInDeep) => {
     if (object1 === object2) {
       return true;
     }
 
-    if (
-      null === object1 ||
-      null === object2 ||
-      "object" !== typeof object1 ||
-      "object" !== typeof object2
-    ) {
+    if (!isInDeep && primitiveNoEqual(object1, object2)) {
       return false;
     }
 
     if (object1.constructor !== object2.constructor) {
-      isDeep && isDeep(object1, object2);
+      deepCheck && deepCheck(object1, object2);
       return false;
     }
 
     if (isArray(object1) && object1.length !== object2.length) {
-      isDeep && isDeep(object1, object2);
+      deepCheck && deepCheck(object1, object2);
       return false;
     }
 
@@ -56,7 +52,7 @@
     const keyLen2 = Object.keys(object2).length;
 
     if (keyLen1 !== keyLen2) {
-      isDeep && isDeep(object1, object2);
+      deepCheck && deepCheck(object1, object2);
       return false;
     }
 
@@ -65,10 +61,13 @@
       const o2 = object2[key];
 
       if (o1 !== o2) {
-        if (!isDeep) {
+        if (primitiveNoEqual(o1, o2)) {
           return false;
-        } else if (!objectEqual(o1, o2, isDeep)) {
-          isDeep && isDeep(object1, object2);
+        }
+        if (!deepCheck) {
+          return false;
+        } else if (!objectEqual(o1, o2, deepCheck, true)) {
+          deepCheck(object1, object2);
           return false;
         }
       }
@@ -109,11 +108,10 @@
 
   const genQueueMacrotask = (macrotaskName) => {
     let ThrottleCount = 5000;
-
+    let isLoopRunning = false;
     const scheduledQueue = [];
     const channel = new MessageChannel();
 
-    let isLoopRunning = false;
     channel.port1.onmessage = () => {
       if (!scheduledQueue.length) {
         isLoopRunning = false;
@@ -181,7 +179,7 @@
     `on${eventType[0].toUpperCase()}${eventType.slice(1)}`;
 
   const eventTypeMap = `click,dblclick,mousedown,mouseup,mousemove,
-keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
+  keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     .split(/[^a-z]+/)
     .reduce((map, eventType) => {
       const eventName = toEventName(eventType);
@@ -272,7 +270,7 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
   const testHostSpecialAttr = (attrName) => /^on[A-Z]/.test(attrName);
   const hostSpecialAttrSet = new Set(
     `onLoad,onBeforeunload,onUnload,onScroll,onFocus,onBlur,
-  onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
+    onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
   );
 
   const onCompositionStart = (e) => {
@@ -305,7 +303,7 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
 
   const setStyle = (style, name, val) => {
     if (isArray(val)) {
-      for (let v of val) {
+      for (const v of val) {
         setStyle(style, name, v);
       }
       return;
@@ -343,33 +341,28 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     },
     toFirst(child, pReference) {
       pReference.insertBefore(
-        isVNode(child) ? child.toFragment() : child,
+        isVNode(child) ? child.fragment() : child,
         pReference.firstChild
       );
     },
     toLast(child, pReference) {
-      pReference.appendChild(isVNode(child) ? child.toFragment() : child);
+      pReference.appendChild(isVNode(child) ? child.fragment() : child);
     },
     toBefore(node, sReference) {
       sReference.parentNode.insertBefore(
-        isVNode(node) ? node.toFragment() : node,
+        isVNode(node) ? node.fragment() : node,
         sReference
       );
     },
     toAfter(node, sReference) {
       sReference.parentNode.insertBefore(
-        isVNode(node) ? node.toFragment() : node,
+        isVNode(node) ? node.fragment() : node,
         sReference.nextSibling
       );
     },
     removeChildren(pNode) {
       if (isVNode(pNode)) {
-        const startNode = pNode.startNode;
-        const endNode = pNode.endNode;
-        const parentNode = startNode.parentNode;
-        while (startNode.nextSibling !== endNode) {
-          parentNode.removeChild(startNode.nextSibling);
-        }
+        document.createElement("div").appendChild(pNode.fragment(false));
       } else {
         while (pNode.firstChild) {
           pNode.removeChild(pNode.firstChild);
@@ -378,14 +371,7 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     },
     removeNode(node) {
       if (isVNode(node)) {
-        const startNode = node.startNode;
-        const endNode = node.endNode;
-        const parentNode = startNode.parentNode;
-        while (startNode.nextSibling !== endNode) {
-          parentNode.removeChild(startNode.nextSibling);
-        }
-        parentNode.removeChild(startNode);
-        parentNode.removeChild(endNode);
+        document.createElement("div").appendChild(node.fragment());
       } else {
         node.parentNode.removeChild(node);
       }
@@ -456,29 +442,23 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     },
   };
 
-  const isVNode = (node) => isFunction(node.toFragment);
+  const isVNode = (node) => node instanceof VNode;
 
   class VNode {
     constructor(key) {
       this.fg = domHostConfig.createFragment();
       this.startNode = domHostConfig.createComment(`start:${key}`);
       this.endNode = domHostConfig.createComment(`end:${key}`);
-      this.fg.appendChild(this.startNode);
-      this.fg.appendChild(this.endNode);
     }
-    toFragment() {
-      // 非首次渲染时, 将 startNode 和 endNode 之间的内容移动到 fg 中
-      if (!this.fg.hasChildNodes()) {
-        let current = this.startNode;
-        while (current) {
-          const nextSibling = current.nextSibling;
-          this.fg.appendChild(current);
-          if (current === this.endNode) {
-            break;
-          } else {
-            current = nextSibling;
-          }
+    fragment(hasEdge = true) {
+      if (this.startNode.isConnected) {
+        while (this.startNode.nextSibling !== this.endNode) {
+          this.fg.appendChild(this.startNode.nextSibling);
         }
+      }
+      if (hasEdge) {
+        this.fg.appendChild(this.endNode);
+        this.fg.insertBefore(this.startNode, this.fg.firstChild);
       }
       return this.fg;
     }
@@ -781,11 +761,11 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     return = null;
     sibling = null;
 
+    isPortal = false;
+    needRender = true;
     flags = MountFlag;
     effectFlag = NoFlags;
     subTreeEffectFlag = NoFlags;
-    isPortal = false;
-    needRender = true;
 
     isHostText = false;
     isHostComponent = false;
@@ -833,15 +813,15 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
         // 文本节点，创建时直接标记更新完
         this.memoizedProps = this.pendingProps;
       } else if (isString(this.type)) {
-        this.isPortal = !!this.pendingProps.__target;
         this.isHostComponent = true;
+        this.isPortal = !!this.pendingProps.__target;
         this.stateNode = hostConfig.createInstance(this.type);
 
         // 常规元素，添加 $ElementPropsKey 属性指向 fiber, 用于事件委托 和 调试
         hostConfig.updateInstanceProps(this.stateNode, this);
       } else {
-        this.isPortal = !!this.pendingProps.__target;
         this.isFunctionComponent = true;
+        this.isPortal = !!this.pendingProps.__target;
         this.stateNode = new VNode(this.relationKey);
       }
     }
@@ -883,7 +863,7 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
       if (this.subTreeEffectFlag) {
         let cursor = this.child;
         while (cursor) {
-          if (!cursor.isHostText) {
+          if (!cursor.isHostText && cursor.effectFlag) {
             cursor.unMount();
           }
           cursor = cursor.sibling;
@@ -959,8 +939,8 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
 
   const findIndex = (increasing, fiber) => {
     let i = 0;
-    let j = increasing.length;
     let mid;
+    let j = increasing.length;
     let tempFiber = increasing[j - 1];
 
     // 如果是仅更新未移动，则可快速定位
@@ -1005,8 +985,8 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
 
     if (childLength) {
       let isFromMap = false;
-      let deletionArr = [];
-      let newKeyToIndex = new Map();
+      let newKeyToIndex = null;
+      const deletionArr = [];
 
       while (oldCursor) {
         let index = -1;
@@ -1016,6 +996,7 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
             startIndex++;
           } else {
             isFromMap = true;
+            newKeyToIndex = new Map();
             fillFiberKeyMap(newKeyToIndex, newFiberArr, startIndex, children);
             index = newKeyToIndex.get(oldCursor.relationKey);
             startIndex = childLength;
@@ -1053,12 +1034,12 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     returnFiber.child = null;
     returnFiber.childrenCount = childLength;
 
+    const increasing = hasReuseFiber ? [] : null;
+    const indexCount = hasReuseFiber ? [] : null;
+    const reuseFiberArr = hasReuseFiber ? [] : null;
+
     let j = 0;
     let maxCount = 0;
-    let increasing = hasReuseFiber ? [] : null;
-    let indexCount = hasReuseFiber ? [] : null;
-    let reuseFiberArr = hasReuseFiber ? [] : null;
-
     let preFiber = null;
     let preNoPortalFiber = null;
     for (let index = 0; index < childLength; index++) {
@@ -1084,8 +1065,8 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
         reuseFiberArr.push(fiber);
 
         // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
-        const i = findIndex(increasing, fiber);
         let count = 0;
+        const i = findIndex(increasing, fiber);
         if (i + 1 > increasing.length) {
           increasing.push(fiber);
           count = increasing.length;
@@ -1155,8 +1136,6 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
       f.subTreeEffectFlag |= flag;
     });
   };
-
-  const SkipEventFunc = noop;
 
   const finishedWork = (fiber, isMount) => {
     const oldProps = fiber.memoizedProps;
@@ -1300,21 +1279,22 @@ keydown,keyup,keypress,submit,touchstart,touchend,touchmove`
     }
 
     const isMountInsert = isMarkMount(parentFiber);
-    const isVNodeParent = isVNode(parentFiber.stateNode);
+    const isVNodeParent = parentFiber.isFunctionComponent;
 
     if (isMountInsert) {
-      if (isVNodeParent) {
-        hostConfig.toBefore(fiber.stateNode, parentFiber.stateNode.endNode);
-      } else {
-        hostConfig.toLast(fiber.stateNode, parentFiber.stateNode);
-      }
+      hostConfig.toLast(
+        fiber.stateNode,
+        isVNodeParent
+          ? parentFiber.stateNode.fragment(false)
+          : parentFiber.stateNode
+      );
       return;
     }
 
     if (fiber.preReferFiber) {
       hostConfig.toAfter(
         fiber.stateNode,
-        isVNode(fiber.preReferFiber.stateNode)
+        fiber.preReferFiber.isFunctionComponent
           ? fiber.preReferFiber.stateNode.endNode
           : fiber.preReferFiber.stateNode
       );
