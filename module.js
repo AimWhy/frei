@@ -14,28 +14,25 @@ const SkipEventFunc = noop;
 const print = (method, ...args) => {
   1 && console[method](...args);
 };
+const primitiveNoEqual = (a, b) =>
+  null === a || null === b || "object" !== typeof a || "object" !== typeof b;
 
-export const objectEqual = (object1, object2, isDeep) => {
+export const objectEqual = (object1, object2, deepCheck, isInDeep) => {
   if (object1 === object2) {
     return true;
   }
 
-  if (
-    null === object1 ||
-    null === object2 ||
-    "object" !== typeof object1 ||
-    "object" !== typeof object2
-  ) {
+  if (!isInDeep && primitiveNoEqual(object1, object2)) {
     return false;
   }
 
   if (object1.constructor !== object2.constructor) {
-    isDeep && isDeep(object1, object2);
+    deepCheck && deepCheck(object1, object2);
     return false;
   }
 
   if (isArray(object1) && object1.length !== object2.length) {
-    isDeep && isDeep(object1, object2);
+    deepCheck && deepCheck(object1, object2);
     return false;
   }
 
@@ -44,7 +41,7 @@ export const objectEqual = (object1, object2, isDeep) => {
   const keyLen2 = Object.keys(object2).length;
 
   if (keyLen1 !== keyLen2) {
-    isDeep && isDeep(object1, object2);
+    deepCheck && deepCheck(object1, object2);
     return false;
   }
 
@@ -53,10 +50,13 @@ export const objectEqual = (object1, object2, isDeep) => {
     const o2 = object2[key];
 
     if (o1 !== o2) {
-      if (!isDeep) {
+      if (primitiveNoEqual(o1, o2)) {
         return false;
-      } else if (!objectEqual(o1, o2, isDeep)) {
-        isDeep && isDeep(object1, object2);
+      }
+      if (!deepCheck) {
+        return false;
+      } else if (!objectEqual(o1, o2, deepCheck, true)) {
+        deepCheck(object1, object2);
         return false;
       }
     }
@@ -764,11 +764,11 @@ class Fiber {
   return = null;
   sibling = null;
 
+  isPortal = false;
+  needRender = true;
   flags = MountFlag;
   effectFlag = NoFlags;
   subTreeEffectFlag = NoFlags;
-  isPortal = false;
-  needRender = true;
 
   isHostText = false;
   isHostComponent = false;
@@ -814,15 +814,15 @@ class Fiber {
       // 文本节点，创建时直接标记更新完
       this.memoizedProps = this.pendingProps;
     } else if (isString(this.type)) {
-      this.isPortal = !!this.pendingProps.__target;
       this.isHostComponent = true;
+      this.isPortal = !!this.pendingProps.__target;
       this.stateNode = hostConfig.createInstance(this.type);
 
       // 常规元素，添加 $ElementPropsKey 属性指向 fiber, 用于事件委托 和 调试
       hostConfig.updateInstanceProps(this.stateNode, this);
     } else {
-      this.isPortal = !!this.pendingProps.__target;
       this.isFunctionComponent = true;
+      this.isPortal = !!this.pendingProps.__target;
       this.stateNode = new VNode(this.relationKey);
     }
   }
@@ -986,8 +986,8 @@ const beginWork = (returnFiber) => {
 
   if (childLength) {
     let isFromMap = false;
+    let newKeyToIndex = null;
     const deletionArr = [];
-    const newKeyToIndex = new Map();
 
     while (oldCursor) {
       let index = -1;
@@ -997,6 +997,7 @@ const beginWork = (returnFiber) => {
           startIndex++;
         } else {
           isFromMap = true;
+          newKeyToIndex = new Map();
           fillFiberKeyMap(newKeyToIndex, newFiberArr, startIndex, children);
           index = newKeyToIndex.get(oldCursor.relationKey);
           startIndex = childLength;
@@ -1279,7 +1280,7 @@ const placementFiber = (fiber, isMount) => {
   }
 
   const isMountInsert = isMarkMount(parentFiber);
-  const isVNodeParent = isVNode(parentFiber.stateNode);
+  const isVNodeParent = parentFiber.isFunctionComponent;
 
   if (isMountInsert) {
     if (isVNodeParent) {
@@ -1293,7 +1294,7 @@ const placementFiber = (fiber, isMount) => {
   if (fiber.preReferFiber) {
     hostConfig.toAfter(
       fiber.stateNode,
-      isVNode(fiber.preReferFiber.stateNode)
+      fiber.preReferFiber.isFunctionComponent
         ? fiber.preReferFiber.stateNode.endNode
         : fiber.preReferFiber.stateNode
     );
