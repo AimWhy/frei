@@ -16,6 +16,9 @@
   exports.createRoot = createRoot;
 ```
 
+# js-framework-benchmark
+
+ ![Screenshot 2024-02-14 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-1-18.png)
 
 # 代码实例：
 ```jsx
@@ -102,7 +105,7 @@ createRoot(document.querySelector("#app")).render(<App />);
  ![Screenshot 2023-11-19 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-16.png)
  ![Screenshot 2023-12-30 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-30.png)
  ![Screenshot 2024-01-04 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-0-36.png)
-
+ ![Screenshot 2024-02-14 at 9 21 40 PM](https://raw.githubusercontent.com/AimWhy/frei/main/imags/1-1-18.png)
 
 # Thanks @krausest 
 
