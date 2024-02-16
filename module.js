@@ -688,38 +688,18 @@ const RefFlag = 1 << 5; // 更新 & 卸载副作用
 const LifecycleFlag = 1 << 6; // 卸载副作用
 const UnmountFlag = 1 << 7; // 卸载标记
 
-const markUnMount = (fiber) => {
-  fiber.flags |= UnmountFlag;
-};
+const markUnMount = (fiber) => void (fiber.flags |= UnmountFlag);
 const isMarkUnMount = (fiber) => fiber.flags & UnmountFlag;
-const markUpdate = (fiber) => {
-  fiber.flags |= UpdateFlag;
-};
+const markUpdate = (fiber) => void (fiber.flags |= UpdateFlag);
 const isMarkUpdate = (fiber) => fiber.flags & UpdateFlag;
-const markMount = (fiber, preFiber) => {
-  fiber.flags |= MountFlag;
-  fiber.preReferFiber = preFiber;
-};
+const markMount = (fiber) => void (fiber.flags |= MountFlag);
 const isMarkMount = (fiber) => fiber.flags & MountFlag;
-const markMoved = (fiber, preFiber) => {
-  fiber.flags |= MovedFlag;
-  fiber.preReferFiber = preFiber;
-};
-const markPortalMoved = (fiber, preFiber) => {
-  fiber.flags |= PortalMovedFlag;
-  fiber.preReferFiber = preFiber;
-};
-const unMarkMoved = (fiber) => {
-  fiber.flags &= ~MovedFlag;
-};
+const markMoved = (fiber) => void (fiber.flags |= MovedFlag);
+const markPortalMoved = (fiber) => void (fiber.flags |= PortalMovedFlag);
 const isMarkMoved = (fiber) => fiber.flags & (MovedFlag | PortalMovedFlag);
-const markChildDeletion = (fiber) => {
-  fiber.flags |= ChildDeletion;
-};
+const markChildDeletion = (fiber) => void (fiber.flags |= ChildDeletion);
 const isMarkChildDeletion = (fiber) => fiber.flags & ChildDeletion;
-const markRef = (fiber) => {
-  fiber.flags |= RefFlag;
-};
+const markRef = (fiber) => void (fiber.flags |= RefFlag);
 const isMarkRef = (fiber) => fiber.flags & RefFlag;
 
 const EmptyProps = {};
@@ -739,6 +719,8 @@ class Fiber {
   oldIndex = -1;
   childrenCount = 0;
   __deletion = null;
+  __skipSelf = false;
+  __skipToLast = false;
   stateNode = null;
   preReferFiber = null;
 
@@ -846,7 +828,10 @@ class Fiber {
     if (this.subTreeEffectFlag) {
       let cursor = this.child;
       while (cursor) {
-        if (!cursor.isHostText && cursor.effectFlag) {
+        if (
+          !cursor.isHostText &&
+          (cursor.effectFlag || cursor.subTreeEffectFlag)
+        ) {
           cursor.unMount();
         }
         cursor = cursor.sibling;
@@ -895,8 +880,8 @@ const createFiber = (element, relationKey, oldFiber) => {
   if (fiber) {
     fiber.sibling = null;
     fiber.return = null;
-    fiber.__skip = false;
-    fiber.__isReuseFromMe = false;
+    fiber.__skipSelf = false;
+    fiber.__skipToLast = false;
     fiber.__deletion = null;
     fiber.preReferFiber = null;
     fiber.pendingProps = element.props;
@@ -920,21 +905,21 @@ const findParentFiber = (fiber, checker) => {
   }
 };
 
-const findIndex = (increasing, fiber) => {
+const findIndex = (increasing, currentIndex) => {
   let i = 0;
   let mid;
   let j = increasing.length;
-  let tempFiber = increasing[j - 1];
+  let tempIndex = increasing[j - 1];
 
   // 如果是仅更新未移动，则可快速定位
-  if (tempFiber && tempFiber.oldIndex < fiber.oldIndex) {
+  if (j === 0 || tempIndex < currentIndex) {
     return j;
   }
 
   while (i !== j) {
     mid = Math.floor((i + j) / 2);
-    tempFiber = increasing[mid];
-    if (tempFiber.oldIndex < fiber.oldIndex) {
+    tempIndex = increasing[mid];
+    if (tempIndex < currentIndex) {
       i = mid + 1;
     } else {
       j = mid;
@@ -962,13 +947,16 @@ const beginWork = (returnFiber) => {
   const childLength = children ? children.length : 0;
   const newFiberArr = childLength ? Array(childLength) : null;
 
+  let j = 0;
+  let maxCount = 0;
   let startIndex = 0;
-  let hasReuseFiber = false;
   let oldCursor = returnFiber.child;
+  const indexCount = [];
 
   if (childLength) {
     let isFromMap = false;
     let newKeyToIndex = null;
+    const increasing = [];
     const deletionArr = [];
 
     while (oldCursor) {
@@ -981,16 +969,29 @@ const beginWork = (returnFiber) => {
           isFromMap = true;
           newKeyToIndex = new Map();
           fillFiberKeyMap(newKeyToIndex, newFiberArr, startIndex, children);
-          index = newKeyToIndex.get(oldCursor.relationKey);
           startIndex = childLength;
         }
-      } else {
-        index = newKeyToIndex.get(oldCursor.relationKey);
+      }
+
+      if (isFromMap) {
+        index = newKeyToIndex.has(oldCursor.relationKey)
+          ? newKeyToIndex.get(oldCursor.relationKey)
+          : -1;
       }
 
       if (index > -1) {
-        hasReuseFiber = true;
         newFiberArr[index] = oldCursor;
+
+        // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
+        const _i = findIndex(increasing, index);
+        if (_i === increasing.length) {
+          increasing.push(index);
+          indexCount[j] = increasing.length;
+        } else {
+          increasing[_i] = index;
+          indexCount[j] = _i + 1;
+        }
+        maxCount = Math.max(maxCount, indexCount[j++]);
       } else {
         deletionArr.push(oldCursor);
       }
@@ -1017,97 +1018,53 @@ const beginWork = (returnFiber) => {
   returnFiber.child = null;
   returnFiber.childrenCount = childLength;
 
-  const increasing = hasReuseFiber ? [] : null;
-  const indexCount = hasReuseFiber ? [] : null;
-  const reuseFiberArr = hasReuseFiber ? [] : null;
-
-  let j = 0;
-  let maxCount = 0;
-  let preFiber = null;
-  let preNoPortalFiber = null;
-  for (let index = 0; index < childLength; index++) {
-    const fiberOrKey = newFiberArr[index];
+  let nextFiber = null;
+  let newIndex = childLength;
+  while (newIndex-- > 0) {
+    const fiberOrKey = newFiberArr[newIndex];
     const isKey = isString(fiberOrKey);
     const relationKey = isKey ? fiberOrKey : fiberOrKey.relationKey;
     const oldFiber = isKey ? null : fiberOrKey;
-    const fiber = createFiber(children[index], relationKey, oldFiber);
+    const fiber = createFiber(children[newIndex], relationKey, oldFiber);
 
     fiber.oldIndex = fiber.index;
-    fiber.index = index;
+    fiber.index = newIndex;
     fiber.return = returnFiber;
+    fiber.sibling = nextFiber;
 
-    if (fiber.oldIndex === -1) {
-      markMount(fiber, preNoPortalFiber);
-    } else {
-      markMoved(fiber, preNoPortalFiber);
-
-      if (!!fiber.memoizedProps.__target ^ fiber.isPortal) {
-        markPortalMoved(fiber, preNoPortalFiber);
-      }
-
-      reuseFiberArr.push(fiber);
-
-      // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
-      let count = 0;
-      const i = findIndex(increasing, fiber);
-      if (i + 1 > increasing.length) {
-        increasing.push(fiber);
-        count = increasing.length;
-      } else {
-        increasing[i] = fiber;
-        count = i + 1;
-      }
-      indexCount[j++] = count;
-      maxCount = Math.max(maxCount, count);
+    if (newIndex === 0) {
+      returnFiber.child = fiber;
     }
 
-    if (index === 0) {
-      returnFiber.child = fiber;
+    if (fiber.oldIndex === -1) {
+      markMount(fiber);
     } else {
-      preFiber.sibling = fiber;
+      // Portal 的切换需要特殊标记
+      if (!!fiber.memoizedProps.__target ^ fiber.isPortal) {
+        markPortalMoved(fiber);
+      } else if (maxCount > 0 && indexCount[--j] === maxCount) {
+        maxCount--;
+
+        // 只考虑在 returnFiber 内部是否可以跳过
+        if (isSkipFiber(fiber)) {
+          fiber.__skipSelf = true;
+          fiber.__skipToLast = !fiber.sibling || fiber.sibling.__skipToLast;
+        }
+      } else {
+        markMoved(fiber);
+      }
     }
 
     if (!fiber.isPortal) {
-      preNoPortalFiber = fiber;
+      let temp = fiber.sibling;
+      while (temp && !temp.preReferFiber) {
+        temp.preReferFiber = fiber;
+        temp = temp.sibling;
+      }
     }
 
-    preFiber = fiber;
+    nextFiber = fiber;
     fiber.memoizedProps = fiber.pendingProps;
-  }
-
-  if (hasReuseFiber) {
-    let reuseFromFiber = null;
-    // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
-    // 所以需要再走一遍构建 increasing 的逻辑
-    for (let i = reuseFiberArr.length - 1; i > -1; i--) {
-      const fiber = reuseFiberArr[i];
-
-      // 不需要移动的 oldFiber 「最长递增子序列还原长串」
-      if (maxCount > 0 && indexCount[i] === maxCount) {
-        // increasing[maxCount - 1] = fiber;
-
-        // 属于递增子序列里，取消标记位移
-        unMarkMoved(fiber);
-        maxCount--;
-      }
-
-      // 只考虑在 returnFiber 内部是否可以跳过
-      if (isSkipFiber(fiber)) {
-        // 在 reuseFromFiber 后面的都是「干净的 & 可跳过的复用fiber」
-        if (
-          childLength - 1 === fiber.index ||
-          (reuseFromFiber && reuseFromFiber.index - 1 === fiber.index)
-        ) {
-          reuseFromFiber = fiber;
-        }
-
-        fiber.__skip = true;
-      }
-    }
-
-    if (reuseFromFiber) {
-      reuseFromFiber.__isReuseFromMe = true;
-    }
   }
 
   return returnFiber.child;
@@ -1231,11 +1188,11 @@ function* genFiberTree2(returnFiber) {
   let current = returnFiber.child;
 
   while (queue.length > 0) {
-    if (!current || current.__isReuseFromMe) {
+    if (!current || current.__skipToLast) {
       current = queue.pop();
       yield current;
       current = current.sibling;
-    } else if (current.__skip) {
+    } else if (current.__skipSelf) {
       current = current.sibling;
     } else if (current.isHostText || !current.needRender) {
       yield current;
