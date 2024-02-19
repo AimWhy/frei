@@ -252,7 +252,10 @@ const initEvent = (container, eventType) => {
   });
 };
 
-const testHostSpecialAttr = (attrName) => /^on[A-Z]/.test(attrName);
+const testHostSpecialAttr = (attrName) => {
+  const code = attrName.charCodeAt(2);
+  return attrName[0] === "o" && attrName[1] === "n" && code >= 65 && code <= 90;
+};
 const hostSpecialAttrSet = new Set(
   `onLoad,onBeforeunload,onUnload,onScroll,onFocus,onBlur,
   onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
@@ -1214,7 +1217,7 @@ const placementFiber = (fiber, isMount) => {
 
   // 它是一个 portal: 用带有 __target 指向的 stateNode
   if (fiber.isPortal) {
-    hostConfig.toLast(fiber.stateNode, fiber.pendingProps.__target);
+    hostConfig.toLast(fiber.stateNode, fiber.memoizedProps.__target);
     return;
   }
 
