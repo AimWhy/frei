@@ -82,7 +82,7 @@ function App(props) {
         点击事件
       </button>
 
-      <Fragment key="小羽毛key" __target={state ? document.body : void 0}>
+      <Fragment key="小羽毛key" $target={state ? document.body : void 0}>
         <div>
           <div>小羽毛是个</div>
           <div>机灵鬼</div>
@@ -93,12 +93,12 @@ function App(props) {
         <div>Fragment</div>
       </Fragment>
 
-      <Fragment key="799" __target={document.body}>
+      <Fragment key="799" $target={document.body}>
         <div>Portal-body A</div>
       </Fragment>
 
       {!state ? (
-        <Fragment key="77" __target={document.body}>
+        <Fragment key="77" $target={document.body}>
           <div>
             <div>Portal-999999999999999</div>
             <div>Portal-666666666666666</div>

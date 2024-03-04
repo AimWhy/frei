@@ -12,7 +12,7 @@ const isString = (val) => "string" === typeof val;
 const isFunction = (val) => "function" === typeof val;
 const SkipEventFunc = noop;
 const print = (method, ...args) => {
-  false && console[method](...args);
+  1 && console[method](...args);
 };
 const primitiveNoEqual = (a, b) =>
   null === a || null === b || "object" !== typeof a || "object" !== typeof b;
@@ -715,23 +715,22 @@ class Fiber {
   pendingProps = EmptyProps;
   memoizedProps = EmptyProps;
   memoizedState = null;
-  __StateIndex = 0;
   updateQueue = null;
+  __StateIndex = 0;
 
   index = -1;
   oldIndex = -1;
   childrenCount = 0;
-  __deletion = null;
+  stateNode = null;
   __skipSelf = false;
   __skipToLast = false;
-  stateNode = null;
-  preReferFiber = null;
+  __deletion = null;
+  __preReferFiber = null;
 
   child = null;
   return = null;
   sibling = null;
 
-  isPortal = false;
   needRender = true;
   flags = MountFlag;
   effectFlag = NoFlags;
@@ -743,6 +742,14 @@ class Fiber {
 
   get absoluteKey() {
     return `${this.return ? this.return.absoluteKey : ""}^${this.relationKey}`;
+  }
+
+  get portalTarget() {
+    return this.pendingProps.$target;
+  }
+
+  get isStatic() {
+    return this.pendingProps.$static;
   }
 
   get normalChildren() {
@@ -768,29 +775,21 @@ class Fiber {
     }
   }
 
-  constructor(element, relationKey) {
-    this.relationKey = relationKey;
-    this.type = element.type;
-    this.key = element.key;
-    this.pendingProps = element.props;
+  constructor(type, content) {
+    this.type = type;
 
     if (this.type === "text") {
       this.isHostText = true;
-      this.stateNode = hostConfig.createText(this.pendingProps.content);
-
-      // 文本节点，创建时直接标记更新完
-      this.memoizedProps = this.pendingProps;
+      this.stateNode = hostConfig.createText(content);
     } else if (isString(this.type)) {
       this.isHostComponent = true;
-      this.isPortal = !!this.pendingProps.__target;
       this.stateNode = hostConfig.createInstance(this.type);
 
       // 常规元素，添加 $ElementPropsKey 属性指向 fiber, 用于事件委托 和 调试
       hostConfig.updateInstanceProps(this.stateNode, this);
     } else {
       this.isFunctionComponent = true;
-      this.isPortal = !!this.pendingProps.__target;
-      this.stateNode = new VNode(this.relationKey);
+      this.stateNode = new VNode(this.type.name);
     }
   }
 
@@ -827,30 +826,35 @@ class Fiber {
     }
   }
 
-  unMount() {
-    if (this.subTreeEffectFlag) {
-      let cursor = this.child;
-      while (cursor) {
-        if (
-          !cursor.isHostText &&
-          (cursor.effectFlag || cursor.subTreeEffectFlag)
-        ) {
-          cursor.unMount();
+  unMount(cleanEffect) {
+    let cursor = this.child;
+    while (cursor) {
+      const hasEffect =
+        !cursor.isHostText &&
+        Boolean(cursor.effectFlag || cursor.subTreeEffectFlag);
+      cursor.unMount(hasEffect);
+      cursor = cursor.sibling;
+    }
+
+    if (cleanEffect) {
+      if (this.effectFlag & LifecycleFlag) {
+        if (this.hookQueue) {
+          this.hookQueue.length = 0;
         }
-        cursor = cursor.sibling;
+        dispatchHook(this, "onUnMounted");
+      }
+
+      if (this.effectFlag & RefFlag) {
+        this.ref && this.ref(null);
       }
     }
 
-    if (this.effectFlag & LifecycleFlag) {
-      if (this.hookQueue) {
-        this.hookQueue.length = 0;
-      }
-      dispatchHook(this, "onUnMounted");
-    }
-
-    if (this.effectFlag & RefFlag) {
-      this.ref && this.ref(null);
-    }
+    // fiber.oldIndex = -1;
+    // fiber.flags = NoFlags;
+    // fiber.needRender = true;
+    // fiber.child = fiber.sibling = fiber.return = null;
+    // fiber.__skipSelf = this.__skipToLast = false;
+    // fiber.__preReferFiber = fiber.__deletion = null;
 
     this.effectFlag = this.subTreeEffectFlag = NoFlags;
     markUnMount(this);
@@ -881,18 +885,25 @@ const createFiber = (element, relationKey, oldFiber) => {
   let fiber = oldFiber;
 
   if (fiber) {
-    fiber.sibling = null;
-    fiber.return = null;
     fiber.__skipSelf = false;
     fiber.__skipToLast = false;
     fiber.__deletion = null;
-    fiber.preReferFiber = null;
-    fiber.pendingProps = element.props;
-    fiber.needRender = finishedWork(fiber, false);
-    fiber.isPortal = !!fiber.pendingProps.__target;
+    fiber.__preReferFiber = null;
+
+    fiber.return = null;
+    fiber.sibling = null;
   } else {
-    fiber = new Fiber(element, relationKey);
-    finishedWork(fiber, true);
+    fiber = new Fiber(element.type, element.props.content);
+  }
+
+  fiber.key = element.key;
+  fiber.relationKey = relationKey;
+  fiber.pendingProps = element.props;
+  if (oldFiber && fiber.pendingProps.$static === true) {
+    debugger;
+    fiber.needRender = false;
+  } else {
+    fiber.needRender = finishedWork(fiber, !oldFiber);
   }
 
   return fiber;
@@ -1043,7 +1054,7 @@ const beginWork = (returnFiber) => {
       markMount(fiber);
     } else {
       // Portal 的切换需要特殊标记
-      if (!!fiber.memoizedProps.__target ^ fiber.isPortal) {
+      if (!!fiber.memoizedProps.$target ^ !!fiber.portalTarget) {
         markPortalMoved(fiber);
       } else if (maxCount > 0 && indexCount[--j] === maxCount) {
         maxCount--;
@@ -1058,10 +1069,10 @@ const beginWork = (returnFiber) => {
       }
     }
 
-    if (!fiber.isPortal) {
+    if (!fiber.portalTarget) {
       let temp = fiber.sibling;
-      while (temp && !temp.preReferFiber) {
-        temp.preReferFiber = fiber;
+      while (temp && !temp.__preReferFiber) {
+        temp.__preReferFiber = fiber;
         temp = temp.sibling;
       }
     }
@@ -1083,6 +1094,8 @@ const markUnMountEffect = (fiber, flag) => {
 const finishedWork = (fiber, isMount) => {
   const oldProps = fiber.memoizedProps;
   const newProps = fiber.pendingProps;
+
+  print("count", "Generator B");
 
   if (fiber.isHostText) {
     if (!oldProps || newProps.content !== oldProps.content) {
@@ -1120,7 +1133,7 @@ const finishedWork = (fiber, isMount) => {
     const result = [];
 
     for (const pKey in unionProps) {
-      if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
+      if (pKey === "children" || pKey === "ref" || pKey[0] === "$") {
         continue;
       }
 
@@ -1177,7 +1190,7 @@ const finishedWork = (fiber, isMount) => {
     return isMount || !propsEqual(oldProps.children, newProps.children, true);
   }
 
-  if (fiber.needRender || !propsEqual(oldProps, newProps)) {
+  if (isMount || !propsEqual(oldProps, newProps)) {
     markUpdate(fiber);
     return true;
   }
@@ -1191,6 +1204,8 @@ function* genFiberTree2(returnFiber) {
   let current = returnFiber.child;
 
   while (queue.length > 0) {
+    // print("count", "Generator A");
+
     if (!current || current.__skipToLast) {
       current = queue.pop();
       yield current;
@@ -1215,9 +1230,9 @@ const placementFiber = (fiber, isMount) => {
     return;
   }
 
-  // 它是一个 portal: 用带有 __target 指向的 stateNode
-  if (fiber.isPortal) {
-    hostConfig.toLast(fiber.stateNode, fiber.memoizedProps.__target);
+  // 它是一个 portal: 用带有 $target 指向的 stateNode
+  if (!!fiber.portalTarget) {
+    hostConfig.toLast(fiber.stateNode, fiber.portalTarget);
     return;
   }
 
@@ -1234,12 +1249,12 @@ const placementFiber = (fiber, isMount) => {
     return;
   }
 
-  if (fiber.preReferFiber) {
+  if (fiber.__preReferFiber) {
     hostConfig.toAfter(
       fiber.stateNode,
-      fiber.preReferFiber.isFunctionComponent
-        ? fiber.preReferFiber.stateNode.endNode
-        : fiber.preReferFiber.stateNode
+      fiber.__preReferFiber.isFunctionComponent
+        ? fiber.__preReferFiber.stateNode.endNode
+        : fiber.__preReferFiber.stateNode
     );
     return;
   }
@@ -1322,7 +1337,6 @@ const commitRoot = (renderContext) => {
       }
     }
 
-    fiber.needRender = false;
     fiber.flags = NoFlags;
   }
 };
@@ -1344,13 +1358,11 @@ const innerRender = (renderContext) => {
     return toCommit.bind(null, renderContext);
   }
 
-  print("count", "Generator Fiber Count");
+  // print("count", "Generator Fiber Count");
 
+  current.needRender = false;
   if (current.flags !== NoFlags) {
     renderContext.MutationQueue.push(current);
-  } else {
-    current.flags = NoFlags;
-    current.needRender = false;
   }
 
   return true;

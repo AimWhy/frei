@@ -63,7 +63,7 @@ function App() {
         </div>
       </NameContext.Provider>
 
-      <Fragment key="799" __target={document.body}>
+      <Fragment key="799" $target={document.body}>
         <Test />
       </Fragment>
     </div>

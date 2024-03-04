@@ -193,7 +193,7 @@ const Row = ({ selected, item, dispatch }) => {
             <span>
               <i>流口水接待来访</i>
             </span>
-            <div>
+            <div $static4>
               <div>
                 <div>
                   <div>
@@ -284,13 +284,14 @@ const Main = () => {
   const [{ data, selected }, dispatch] = useReducer(listReducer, initialState);
 
   return (
-    <div className="container">
+    <div className="container" >
       <Jumbotron dispatch={dispatch} />
       {data.length ? (
-        <table className="table table-hover table-striped test-data">
-          <tbody>
+        <table className="table table-hover table-striped test-data" >
+          <tbody $static>
             {data.map((item) => (
               <Row
+                key={item.id}
                 item={item}
                 selected={selected === item.id}
                 dispatch={dispatch}
