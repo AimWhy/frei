@@ -252,10 +252,7 @@ const initEvent = (container, eventType) => {
   });
 };
 
-const testHostSpecialAttr = (attrName) => {
-  const code = attrName.charCodeAt(2);
-  return attrName[0] === "o" && attrName[1] === "n" && code >= 65 && code <= 90;
-};
+const testHostSpecialAttr = (attrName) => /^on[A-Z]/.test(attrName);
 const hostSpecialAttrSet = new Set(
   `onLoad,onBeforeunload,onUnload,onScroll,onFocus,onBlur,
   onPointerenter,onPointerleave,onInput`.split(/[^a-zA-Z]+/)
@@ -691,18 +688,38 @@ const RefFlag = 1 << 5; // 更新 & 卸载副作用
 const LifecycleFlag = 1 << 6; // 卸载副作用
 const UnmountFlag = 1 << 7; // 卸载标记
 
-const markUnMount = (fiber) => void (fiber.flags |= UnmountFlag);
+const markUnMount = (fiber) => {
+  fiber.flags |= UnmountFlag;
+};
 const isMarkUnMount = (fiber) => fiber.flags & UnmountFlag;
-const markUpdate = (fiber) => void (fiber.flags |= UpdateFlag);
+const markUpdate = (fiber) => {
+  fiber.flags |= UpdateFlag;
+};
 const isMarkUpdate = (fiber) => fiber.flags & UpdateFlag;
-const markMount = (fiber) => void (fiber.flags |= MountFlag);
+const markMount = (fiber, preFiber) => {
+  fiber.flags |= MountFlag;
+  fiber.preReferFiber = preFiber;
+};
 const isMarkMount = (fiber) => fiber.flags & MountFlag;
-const markMoved = (fiber) => void (fiber.flags |= MovedFlag);
-const markPortalMoved = (fiber) => void (fiber.flags |= PortalMovedFlag);
+const markMoved = (fiber, preFiber) => {
+  fiber.flags |= MovedFlag;
+  fiber.preReferFiber = preFiber;
+};
+const markPortalMoved = (fiber, preFiber) => {
+  fiber.flags |= PortalMovedFlag;
+  fiber.preReferFiber = preFiber;
+};
+const unMarkMoved = (fiber) => {
+  fiber.flags &= ~MovedFlag;
+};
 const isMarkMoved = (fiber) => fiber.flags & (MovedFlag | PortalMovedFlag);
-const markChildDeletion = (fiber) => void (fiber.flags |= ChildDeletion);
+const markChildDeletion = (fiber) => {
+  fiber.flags |= ChildDeletion;
+};
 const isMarkChildDeletion = (fiber) => fiber.flags & ChildDeletion;
-const markRef = (fiber) => void (fiber.flags |= RefFlag);
+const markRef = (fiber) => {
+  fiber.flags |= RefFlag;
+};
 const isMarkRef = (fiber) => fiber.flags & RefFlag;
 
 const EmptyProps = {};
@@ -715,22 +732,21 @@ class Fiber {
   pendingProps = EmptyProps;
   memoizedProps = EmptyProps;
   memoizedState = null;
-  updateQueue = null;
   __StateIndex = 0;
+  updateQueue = null;
 
   index = -1;
   oldIndex = -1;
   childrenCount = 0;
-  stateNode = null;
-  __skipSelf = false;
-  __skipToLast = false;
   __deletion = null;
-  __preReferFiber = null;
+  stateNode = null;
+  preReferFiber = null;
 
   child = null;
   return = null;
   sibling = null;
 
+  isPortal = false;
   needRender = true;
   flags = MountFlag;
   effectFlag = NoFlags;
@@ -742,14 +758,6 @@ class Fiber {
 
   get absoluteKey() {
     return `${this.return ? this.return.absoluteKey : ""}^${this.relationKey}`;
-  }
-
-  get portalTarget() {
-    return this.pendingProps.$target;
-  }
-
-  get isStatic() {
-    return this.pendingProps.$static;
   }
 
   get normalChildren() {
@@ -775,21 +783,29 @@ class Fiber {
     }
   }
 
-  constructor(type, content) {
-    this.type = type;
+  constructor(element, relationKey) {
+    this.relationKey = relationKey;
+    this.type = element.type;
+    this.key = element.key;
+    this.pendingProps = element.props;
 
     if (this.type === "text") {
       this.isHostText = true;
-      this.stateNode = hostConfig.createText(content);
+      this.stateNode = hostConfig.createText(this.pendingProps.content);
+
+      // 文本节点，创建时直接标记更新完
+      this.memoizedProps = this.pendingProps;
     } else if (isString(this.type)) {
       this.isHostComponent = true;
+      this.isPortal = !!this.pendingProps.__target;
       this.stateNode = hostConfig.createInstance(this.type);
 
       // 常规元素，添加 $ElementPropsKey 属性指向 fiber, 用于事件委托 和 调试
       hostConfig.updateInstanceProps(this.stateNode, this);
     } else {
       this.isFunctionComponent = true;
-      this.stateNode = new VNode(this.type.name);
+      this.isPortal = !!this.pendingProps.__target;
+      this.stateNode = new VNode(this.relationKey);
     }
   }
 
@@ -826,35 +842,27 @@ class Fiber {
     }
   }
 
-  unMount(cleanEffect) {
-    let cursor = this.child;
-    while (cursor) {
-      const hasEffect =
-        !cursor.isHostText &&
-        Boolean(cursor.effectFlag || cursor.subTreeEffectFlag);
-      cursor.unMount(hasEffect);
-      cursor = cursor.sibling;
-    }
-
-    if (cleanEffect) {
-      if (this.effectFlag & LifecycleFlag) {
-        if (this.hookQueue) {
-          this.hookQueue.length = 0;
+  unMount() {
+    if (this.subTreeEffectFlag) {
+      let cursor = this.child;
+      while (cursor) {
+        if (!cursor.isHostText && cursor.effectFlag) {
+          cursor.unMount();
         }
-        dispatchHook(this, "onUnMounted");
-      }
-
-      if (this.effectFlag & RefFlag) {
-        this.ref && this.ref(null);
+        cursor = cursor.sibling;
       }
     }
 
-    // fiber.oldIndex = -1;
-    // fiber.flags = NoFlags;
-    // fiber.needRender = true;
-    // fiber.child = fiber.sibling = fiber.return = null;
-    // fiber.__skipSelf = this.__skipToLast = false;
-    // fiber.__preReferFiber = fiber.__deletion = null;
+    if (this.effectFlag & LifecycleFlag) {
+      if (this.hookQueue) {
+        this.hookQueue.length = 0;
+      }
+      dispatchHook(this, "onUnMounted");
+    }
+
+    if (this.effectFlag & RefFlag) {
+      this.ref && this.ref(null);
+    }
 
     this.effectFlag = this.subTreeEffectFlag = NoFlags;
     markUnMount(this);
@@ -885,25 +893,18 @@ const createFiber = (element, relationKey, oldFiber) => {
   let fiber = oldFiber;
 
   if (fiber) {
-    fiber.__skipSelf = false;
-    fiber.__skipToLast = false;
-    fiber.__deletion = null;
-    fiber.__preReferFiber = null;
-
-    fiber.return = null;
     fiber.sibling = null;
+    fiber.return = null;
+    fiber.__skip = false;
+    fiber.__isReuseFromMe = false;
+    fiber.__deletion = null;
+    fiber.preReferFiber = null;
+    fiber.pendingProps = element.props;
+    fiber.needRender = finishedWork(fiber, false);
+    fiber.isPortal = !!fiber.pendingProps.__target;
   } else {
-    fiber = new Fiber(element.type, element.props.content);
-  }
-
-  fiber.key = element.key;
-  fiber.relationKey = relationKey;
-  fiber.pendingProps = element.props;
-  if (oldFiber && fiber.pendingProps.$static === true) {
-    debugger;
-    fiber.needRender = false;
-  } else {
-    fiber.needRender = finishedWork(fiber, !oldFiber);
+    fiber = new Fiber(element, relationKey);
+    finishedWork(fiber, true);
   }
 
   return fiber;
@@ -919,21 +920,21 @@ const findParentFiber = (fiber, checker) => {
   }
 };
 
-const findIndex = (increasing, currentIndex) => {
+const findIndex = (increasing, fiber) => {
   let i = 0;
   let mid;
   let j = increasing.length;
-  let tempIndex = increasing[j - 1];
+  let tempFiber = increasing[j - 1];
 
   // 如果是仅更新未移动，则可快速定位
-  if (j === 0 || tempIndex < currentIndex) {
+  if (tempFiber && tempFiber.oldIndex < fiber.oldIndex) {
     return j;
   }
 
   while (i !== j) {
     mid = Math.floor((i + j) / 2);
-    tempIndex = increasing[mid];
-    if (tempIndex < currentIndex) {
+    tempFiber = increasing[mid];
+    if (tempFiber.oldIndex < fiber.oldIndex) {
       i = mid + 1;
     } else {
       j = mid;
@@ -961,16 +962,13 @@ const beginWork = (returnFiber) => {
   const childLength = children ? children.length : 0;
   const newFiberArr = childLength ? Array(childLength) : null;
 
-  let j = 0;
-  let maxCount = 0;
   let startIndex = 0;
+  let hasReuseFiber = false;
   let oldCursor = returnFiber.child;
-  const indexCount = [];
 
   if (childLength) {
     let isFromMap = false;
     let newKeyToIndex = null;
-    const increasing = [];
     const deletionArr = [];
 
     while (oldCursor) {
@@ -983,29 +981,16 @@ const beginWork = (returnFiber) => {
           isFromMap = true;
           newKeyToIndex = new Map();
           fillFiberKeyMap(newKeyToIndex, newFiberArr, startIndex, children);
+          index = newKeyToIndex.get(oldCursor.relationKey);
           startIndex = childLength;
         }
-      }
-
-      if (isFromMap) {
-        index = newKeyToIndex.has(oldCursor.relationKey)
-          ? newKeyToIndex.get(oldCursor.relationKey)
-          : -1;
+      } else {
+        index = newKeyToIndex.get(oldCursor.relationKey);
       }
 
       if (index > -1) {
+        hasReuseFiber = true;
         newFiberArr[index] = oldCursor;
-
-        // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
-        const _i = findIndex(increasing, index);
-        if (_i === increasing.length) {
-          increasing.push(index);
-          indexCount[j] = increasing.length;
-        } else {
-          increasing[_i] = index;
-          indexCount[j] = _i + 1;
-        }
-        maxCount = Math.max(maxCount, indexCount[j++]);
       } else {
         deletionArr.push(oldCursor);
       }
@@ -1032,53 +1017,97 @@ const beginWork = (returnFiber) => {
   returnFiber.child = null;
   returnFiber.childrenCount = childLength;
 
-  let nextFiber = null;
-  let newIndex = childLength;
-  while (newIndex-- > 0) {
-    const fiberOrKey = newFiberArr[newIndex];
+  const increasing = hasReuseFiber ? [] : null;
+  const indexCount = hasReuseFiber ? [] : null;
+  const reuseFiberArr = hasReuseFiber ? [] : null;
+
+  let j = 0;
+  let maxCount = 0;
+  let preFiber = null;
+  let preNoPortalFiber = null;
+  for (let index = 0; index < childLength; index++) {
+    const fiberOrKey = newFiberArr[index];
     const isKey = isString(fiberOrKey);
     const relationKey = isKey ? fiberOrKey : fiberOrKey.relationKey;
     const oldFiber = isKey ? null : fiberOrKey;
-    const fiber = createFiber(children[newIndex], relationKey, oldFiber);
+    const fiber = createFiber(children[index], relationKey, oldFiber);
 
     fiber.oldIndex = fiber.index;
-    fiber.index = newIndex;
+    fiber.index = index;
     fiber.return = returnFiber;
-    fiber.sibling = nextFiber;
-
-    if (newIndex === 0) {
-      returnFiber.child = fiber;
-    }
 
     if (fiber.oldIndex === -1) {
-      markMount(fiber);
+      markMount(fiber, preNoPortalFiber);
     } else {
-      // Portal 的切换需要特殊标记
-      if (!!fiber.memoizedProps.$target ^ !!fiber.portalTarget) {
-        markPortalMoved(fiber);
-      } else if (maxCount > 0 && indexCount[--j] === maxCount) {
-        maxCount--;
+      markMoved(fiber, preNoPortalFiber);
 
-        // 只考虑在 returnFiber 内部是否可以跳过
-        if (isSkipFiber(fiber)) {
-          fiber.__skipSelf = true;
-          fiber.__skipToLast = !fiber.sibling || fiber.sibling.__skipToLast;
-        }
+      if (!!fiber.memoizedProps.__target ^ fiber.isPortal) {
+        markPortalMoved(fiber, preNoPortalFiber);
+      }
+
+      reuseFiberArr.push(fiber);
+
+      // 下面👇🏻 这段逻辑是计算最长递增子序列的，判断可复用定位📌 的旧 oldFiber
+      let count = 0;
+      const i = findIndex(increasing, fiber);
+      if (i + 1 > increasing.length) {
+        increasing.push(fiber);
+        count = increasing.length;
       } else {
-        markMoved(fiber);
+        increasing[i] = fiber;
+        count = i + 1;
       }
+      indexCount[j++] = count;
+      maxCount = Math.max(maxCount, count);
     }
 
-    if (!fiber.portalTarget) {
-      let temp = fiber.sibling;
-      while (temp && !temp.__preReferFiber) {
-        temp.__preReferFiber = fiber;
-        temp = temp.sibling;
-      }
+    if (index === 0) {
+      returnFiber.child = fiber;
+    } else {
+      preFiber.sibling = fiber;
     }
 
-    nextFiber = fiber;
+    if (!fiber.isPortal) {
+      preNoPortalFiber = fiber;
+    }
+
+    preFiber = fiber;
     fiber.memoizedProps = fiber.pendingProps;
+  }
+
+  if (hasReuseFiber) {
+    let reuseFromFiber = null;
+    // increasing 不一定是正确的最长递增序列，中间有些数有可能被替换了
+    // 所以需要再走一遍构建 increasing 的逻辑
+    for (let i = reuseFiberArr.length - 1; i > -1; i--) {
+      const fiber = reuseFiberArr[i];
+
+      // 不需要移动的 oldFiber 「最长递增子序列还原长串」
+      if (maxCount > 0 && indexCount[i] === maxCount) {
+        // increasing[maxCount - 1] = fiber;
+
+        // 属于递增子序列里，取消标记位移
+        unMarkMoved(fiber);
+        maxCount--;
+      }
+
+      // 只考虑在 returnFiber 内部是否可以跳过
+      if (isSkipFiber(fiber)) {
+        // 在 reuseFromFiber 后面的都是「干净的 & 可跳过的复用fiber」
+        if (
+          childLength - 1 === fiber.index ||
+          (reuseFromFiber && reuseFromFiber.index - 1 === fiber.index)
+        ) {
+          reuseFromFiber = fiber;
+        }
+
+        fiber.__skip = true;
+      }
+    }
+
+    if (reuseFromFiber) {
+      reuseFromFiber.__isReuseFromMe = true;
+    }
   }
 
   return returnFiber.child;
@@ -1094,8 +1123,6 @@ const markUnMountEffect = (fiber, flag) => {
 const finishedWork = (fiber, isMount) => {
   const oldProps = fiber.memoizedProps;
   const newProps = fiber.pendingProps;
-
-  print("count", "Generator B");
 
   if (fiber.isHostText) {
     if (!oldProps || newProps.content !== oldProps.content) {
@@ -1133,7 +1160,7 @@ const finishedWork = (fiber, isMount) => {
     const result = [];
 
     for (const pKey in unionProps) {
-      if (pKey === "children" || pKey === "ref" || pKey[0] === "$") {
+      if (pKey === "children" || pKey === "ref" || pKey[0] === "_") {
         continue;
       }
 
@@ -1190,7 +1217,7 @@ const finishedWork = (fiber, isMount) => {
     return isMount || !propsEqual(oldProps.children, newProps.children, true);
   }
 
-  if (isMount || !propsEqual(oldProps, newProps)) {
+  if (fiber.needRender || !propsEqual(oldProps, newProps)) {
     markUpdate(fiber);
     return true;
   }
@@ -1204,13 +1231,11 @@ function* genFiberTree2(returnFiber) {
   let current = returnFiber.child;
 
   while (queue.length > 0) {
-    // print("count", "Generator A");
-
-    if (!current || current.__skipToLast) {
+    if (!current || current.__isReuseFromMe) {
       current = queue.pop();
       yield current;
       current = current.sibling;
-    } else if (current.__skipSelf) {
+    } else if (current.__skip) {
       current = current.sibling;
     } else if (current.isHostText || !current.needRender) {
       yield current;
@@ -1230,9 +1255,9 @@ const placementFiber = (fiber, isMount) => {
     return;
   }
 
-  // 它是一个 portal: 用带有 $target 指向的 stateNode
-  if (!!fiber.portalTarget) {
-    hostConfig.toLast(fiber.stateNode, fiber.portalTarget);
+  // 它是一个 portal: 用带有 __target 指向的 stateNode
+  if (fiber.isPortal) {
+    hostConfig.toLast(fiber.stateNode, fiber.pendingProps.__target);
     return;
   }
 
@@ -1249,12 +1274,12 @@ const placementFiber = (fiber, isMount) => {
     return;
   }
 
-  if (fiber.__preReferFiber) {
+  if (fiber.preReferFiber) {
     hostConfig.toAfter(
       fiber.stateNode,
-      fiber.__preReferFiber.isFunctionComponent
-        ? fiber.__preReferFiber.stateNode.endNode
-        : fiber.__preReferFiber.stateNode
+      fiber.preReferFiber.isFunctionComponent
+        ? fiber.preReferFiber.stateNode.endNode
+        : fiber.preReferFiber.stateNode
     );
     return;
   }
@@ -1337,6 +1362,7 @@ const commitRoot = (renderContext) => {
       }
     }
 
+    fiber.needRender = false;
     fiber.flags = NoFlags;
   }
 };
@@ -1358,11 +1384,13 @@ const innerRender = (renderContext) => {
     return toCommit.bind(null, renderContext);
   }
 
-  // print("count", "Generator Fiber Count");
+  print("count", "Generator Fiber Count");
 
-  current.needRender = false;
   if (current.flags !== NoFlags) {
     renderContext.MutationQueue.push(current);
+  } else {
+    current.flags = NoFlags;
+    current.needRender = false;
   }
 
   return true;
