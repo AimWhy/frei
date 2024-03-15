@@ -288,7 +288,7 @@ const Main = () => {
       <Jumbotron dispatch={dispatch} />
       {data.length ? (
         <table className="table table-hover table-striped test-data" >
-          <tbody $static>
+          <tbody>
             {data.map((item) => (
               <Row
                 key={item.id}
