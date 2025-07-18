@@ -1,4 +1,5 @@
 # frei 
+## module.js 唯一文件，module.js 唯一文件 ， module.js 唯一文件
 
 # 已实现的api
 ```js
